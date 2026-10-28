@@ -1,0 +1,38 @@
+{
+  "title": "实对角化矩阵中心化子维数与多项式生成",
+  "problem_latex": "设 \\(A\\in M_n(\\mathbb R)\\) 可以在实数域上对角化，不同特征值为 \\(\\lambda_1,\\ldots,\\lambda_r\\)，对应特征子空间的维数为 \\(m_1,\\ldots,m_r\\)。\n定义\n\\[\nC(A)=\\{X\\in M_n(\\mathbb R):AX=XA\\}.\n\\]\n求 \\(\\dim C(A)\\)，并证明。\n再判断：每个与 \\(A\\) 交换的矩阵 \\(X\\)，是否都能写成 \\(p(A)\\)，其中 \\(p\\) 是实系数多项式？请区分特征值有无重复的情形。",
+  "steps": [
+    {
+      "text": "先确认题意与记号。把 $A$ 看作 $V=\\mathbb R^n$ 上的线性变换 $v\\mapsto Av$。$A$ 在实数域上可对角化，等价于存在由实特征向量组成的基；因此各 $\\lambda_i$ 都是实数，且这些 $\\lambda_i$ 按定义两两不同，每个特征值对应特征子空间 $E_i=\\ker(A-\\lambda_i I)$，其维数 $m_i\\ge1$。在 $E_i$ 上 $A$ 的作用为 $\\lambda_i I$，且特征子空间直和覆盖整个空间。以下维数均指实向量空间维数。",
+      "math": "V=\\bigoplus_{i=1}^{r}E_i,\\qquad A|_{E_i}=\\lambda_i I_{m_i},\\qquad \\sum_{i=1}^{r}m_i=n."
+    },
+    {
+      "text": "现在把交换条件化为块条件。取可逆实矩阵 $P$ 使 $A=PDP^{-1}$，其中 $D$ 按特征子空间分块为 $D=\\operatorname{diag}(\\lambda_1 I_{m_1},\\ldots,\\lambda_r I_{m_r})$。令 $Y=P^{-1}XP$。由于 $P$ 可逆，$AX=XA$ 当且仅当 $DY=YD$。将 $Y$ 按大小 $m_i\\times m_j$ 分成 $r\\times r$ 个块，记第 $(i,j)$ 块为 $Y_{ij}$。由 $D$ 的第 $i$ 个对角块为 $\\lambda_i I_{m_i}$，直接计算块乘积得",
+      "math": "(DY-YD)_{ij}=(\\lambda_i-\\lambda_j)Y_{ij},\\qquad 1\\le i,j\\le r."
+    },
+    {
+      "text": "当 $i\\ne j$ 时，由 $\\lambda_i\\ne\\lambda_j$，方程 $(\\lambda_i-\\lambda_j)Y_{ij}=0$ 迫使所有非对角块 $Y_{ij}=0$。对角块满足 $(\\lambda_i-\\lambda_i)Y_{ii}=0$，没有限制，所以每个 $Y_i:=Y_{ii}$ 可在 $M_{m_i}(\\mathbb R)$ 中任意选取。反过来，若 $Y$ 是这样的块对角矩阵，逐块相乘立即有 $DY=YD$。因此中心化子在适配基下恰为全体这样的块对角矩阵。共轭映射 $X\\mapsto P^{-1}XP$ 是实线性同构，保持维数，所以",
+      "math": "Y=\\operatorname{diag}(Y_1,\\ldots,Y_r),\\quad Y_i\\in M_{m_i}(\\mathbb R);\\qquad \\dim_{\\mathbb R}C(A)=\\sum_{i=1}^{r}m_i^2."
+    },
+    {
+      "text": "也可直接从特征子空间理解：若 $X\\in C(A)$ 且 $v\\in E_i$，则 $A(Xv)=X(Av)=X(\\lambda_i v)=\\lambda_i Xv$，所以 $Xv\\in E_i$，即交换矩阵必须保持每个特征子空间；而它在每个 $E_i$ 内可任意取线性映射，故维数为 $\\sum_i m_i^2$。",
+      "math": "AX=XA\\iff DY=YD,\\qquad X(E_i)\\subseteq E_i\\quad(i=1,\\ldots,r)."
+    },
+    {
+      "text": "再判断多项式生成。对任意 $p\\in\\mathbb R[x]$，因 $A$ 在 $E_i$ 上等于 $\\lambda_i I$，所以 $p(A)$ 在 $E_i$ 上等于 $p(\\lambda_i)I$。因此在适配基下，所有 $p(A)$ 都是每个特征子空间上取一个数量的块对角矩阵。反过来，若 $X\\in C(A)$ 在每一个 $E_i$ 上都是数量变换，即存在实数 $c_i$ 使 $X|_{E_i}=c_i I_{m_i}$，由于 $\\lambda_1,\\ldots,\\lambda_r$ 两两不同，可用实系数 Lagrange 插值构造次数不超过 $r-1$ 的多项式 $p$，使 $p(\\lambda_i)=c_i$。于是 $p(A)$ 与 $X$ 在每个 $E_i$ 上一致，故 $X=p(A)$。",
+      "math": "p(A)|_{E_i}=p(\\lambda_i)I_{m_i};\\qquad X|_{E_i}=c_i I_{m_i}\\ (i=1,\\ldots,r)\\iff X=p(A)."
+    },
+    {
+      "text": "若所有特征值互不相同，即 $r=n$ 且每个 $m_i=1$，则中心化子的每个对角块都是 $1\\times1$ 矩阵，自动是数量变换。由上面的反推，每个与 $A$ 交换的 $X$ 都能写成某个实系数多项式 $p(A)$。具体地，在特征基下 $A=\\operatorname{diag}(\\lambda_1,\\ldots,\\lambda_n)$，交换矩阵 $X$ 也为对角矩阵 $\\operatorname{diag}(x_1,\\ldots,x_n)$，用插值条件 $p(\\lambda_i)=x_i$ 即可构造 $p$。",
+      "math": "r=n,\\quad m_i=1\\ (1\\le i\\le n);\\qquad C(A)=\\mathbb R[A]=\\{p(A):p\\in\\mathbb R[x]\\},\\quad \\dim C(A)=n."
+    },
+    {
+      "text": "若特征值有重复，则在 $n>1$ 时必存在某个 $m_j\\ge2$，并非每个交换矩阵都能写成 $p(A)$。取 $E_j$ 上一个非数量线性映射 $B$，例如在 $E_j$ 的某组基下矩阵为 $E_{12}$，令在适配基下 $Y$ 只有第 $j$ 个对角块为 $B$、其余对角块为 $0$。则 $Y$ 与 $D$ 交换，所以相应的 $X=PYP^{-1}$ 属于 $C(A)$；但若 $X=p(A)$，则 $X$ 在 $E_j$ 上应为 $p(\\lambda_j)I_{m_j}$，与 $B$ 非数量矛盾。简单例子是 $A=I_2$：此时 $C(A)=M_2(\\mathbb R)$，而 $p(A)=p(1)I_2$ 只能是数量矩阵，$X=\\operatorname{diag}(1,0)$ 与 $A$ 交换却不能写成 $p(A)$。当 $n=1$ 时只有一阶矩阵，任意 $X$ 当然是 $p(A)$。",
+      "math": "B\\ne cI_{m_j};\\qquad X=P\\operatorname{diag}(0,\\ldots,0,B,0,\\ldots,0)P^{-1}\\in C(A)."
+    }
+  ],
+  "answer_latex": "(1) $\\dim_{\\mathbb R}C(A)=\\sum_{i=1}^{r}m_i^2$。 (2) 若所有特征值互不相同，即 $r=n$（此时各 $m_i=1$），则每个与 $A$ 交换的矩阵 $X$ 都可写成 $X=p(A)$，其中 $p\\in\\mathbb R[x]$，即 $C(A)=\\mathbb R[A]$。若特征值有重复，则一般不能；准确刻画是：$X=p(A)$ 当且仅当 $X$ 在每一个特征子空间 $E_i=\\ker(A-\\lambda_i I)$ 上都是数量变换，即 $X|_{E_i}=c_i I_{m_i}$。等价地，在适配基下 $\\{p(A):p\\in\\mathbb R[x]\\}=\\{\\operatorname{diag}(c_1 I_{m_1},\\ldots,c_r I_{m_r}):c_i\\in\\mathbb R\\}$；当某个 $m_i>1$（$n>1$ 时存在）时，它是 $C(A)$ 的真子集。",
+  "check_latex": "核验：当所有 $m_i=1$ 时，$\\sum_{i=1}^r m_i^2=n$，与 $n$ 个互异特征值下中心化子维数一致；当 $A=\\lambda I_n$ 时，$m_1=n$，$\\dim C(A)=n^2$，确为全体 $n\\times n$ 矩阵，而 $p(A)$ 仅为数量矩阵，说明重复谱时不能断言多项式生成。另注意题目已给出“可在实数域上对角化”，故各特征值均为实数，特征子空间维数等于代数重数；若不可对角化，不能直接套用 $\\sum m_i^2$。\n\n模型复核通过（不等于严格正确性保证）",
+  "status": "complete",
+  "plots": []
+}

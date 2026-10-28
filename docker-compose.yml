@@ -1,0 +1,25 @@
+services:
+  qqbot:
+    build: .
+    container_name: qq-math-bot
+    env_file: .env
+    environment:
+      DATA_DIR: /app/data
+    volumes:
+      - qqbot-data:/app/data
+    restart: unless-stopped
+    init: true
+    mem_limit: 1536m
+    cpus: 1.5
+    pids_limit: 96
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+volumes:
+  qqbot-data:

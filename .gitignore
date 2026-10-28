@@ -1,0 +1,44 @@
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Virtual environments and Python caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Runtime data, attachments, generated solutions and logs
+data/
+logs/
+*.log
+*.sqlite*
+*.db
+*.db-*
+
+# Build artifacts, old deployment backups and local work files
+.build-tmp/
+build/
+dist/
+output/
+tmp/
+*.egg-info/
+*.before-*
+*.bak
+*.zip
+*.tar.gz
+
+# Editor and operating-system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini
