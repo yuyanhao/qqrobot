@@ -46,6 +46,7 @@ def test_repair_preserves_original_and_is_repeatable(tmp_path):
     assert path.with_name("render.py.before-math-command-fix").read_text(encoding="utf-8") == original
     assert patched.count("Longleftrightarrow") == 1
     assert "mid" in patched and "bigoplus" in patched
+    assert "preceq" in patched and "succeq" in patched
 
 
 def test_repair_checks_service_version_before_modifying_renderer(tmp_path):

@@ -1,5 +1,9 @@
 # qqrobot
 
+当前版本：[v0.1](https://github.com/yuyanhao/qqrobot/releases/tag/v0.1)。变更内容见 [CHANGELOG.md](CHANGELOG.md)。
+
+`VERSION` 保存版本号；主分支更新此文件时，发布流程会创建对应 Git 标签和 GitHub Release。
+
 基于 QQ 官方机器人接口与 DeepSeek 的数学、物理解题机器人。支持文字、图片、PDF 输入，按题号保存任务、关联追问，并将解答排版为图片和完整 PDF。
 
 模型推理在远端 API 完成，本地负责材料处理、任务队列、SymPy 辅助计算、绘图、持久化与 XeLaTeX 排版。程序面向个人或小范围使用，默认串行处理重任务；部署配置为服务设置了 1536 MB 内存上限。
@@ -167,6 +171,19 @@ python3 -m venv .venv
 上述命令适用于 Bash；Windows 使用 `.venv\Scripts\python.exe`。填写真实配置后，可运行 `python settings.py` 离线检查配置格式，该命令不连接 QQ 或模型，也不验证密钥余额和权限。直接运行开发实例的入口为 `python task_bot.py`，`bot.py` 是兼容入口。
 
 离线测试包含模拟模型与 QQ 接口、题号权限、材料收集、PDF 选页、任务生命周期、结果交付和更新脚本。离线测试不能代替真实账号验收；首次部署后，应在目标群聊和私聊中分别验证发题、查询、追问、图片和 PDF 领取。
+
+### 数学符号覆盖
+
+v0.1 系统核对了已加载 LaTeX/AMS 宏包中的 443 个标准符号、界符、重音及安全别名，另验证 39 个常用数学宏；当前支持命令共 612 项。整套目录通过实际 XeLaTeX 编译，文件操作、宏定义及任意包加载等指令仍被拒绝。自定义宏和未加载宏包不在此范围。
+
+目录保存在 `tests/fixtures/standard-math-symbols.json`。安装 TeX Live 后，可用以下命令重新核对并合并目录，再运行测试：
+
+```bash
+python tools/update_math_symbols.py --apply
+python -m pytest -q
+```
+
+已有题目因标准数学命令被拦截时，等待其他任务结束，从最新仓库目录执行 `sudo bash repair_pdf.sh 题号`。脚本适用于默认 systemd 安装，会短暂停止服务、备份排版文件、补齐目录、重排已保存的解答并恢复服务；不重新调用模型，也不改变原解答和复核结论。
 
 ## 更新
 

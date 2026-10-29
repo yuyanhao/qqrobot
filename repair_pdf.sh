@@ -49,7 +49,56 @@ source = path.read_text(encoding="utf-8")
 marker = "Rightarrow Leftarrow leftrightarrow Leftrightarrow"
 if marker not in source:
     raise SystemExit("排版文件版本不同，未作自动修改。请保留此输出。")
-commands = ("Longrightarrow", "Longleftarrow", "Longleftrightarrow", "longleftrightarrow", "mid", "bigoplus")
+commands = tuple("""
+Arrowvert Bbbk Box Bumpeq Cap Cup Delta Diamond Doteq Downarrow Finv Game Gamma Im Join Lambda
+Leftarrow Leftrightarrow Lleftarrow Longleftarrow Longleftrightarrow Longrightarrow Lsh Omega
+Phi Pi Psi Re Rightarrow Rrightarrow Rsh Sigma Subset Supset Theta Uparrow Updownarrow Upsilon
+Vdash Vert Vvdash Xi acute aleph alpha amalg angle approx approxeq arrowvert ast asymp
+backepsilon backprime backsim backsimeq backslash bar barwedge because beta beth between
+bigcap bigcirc bigcup bigodot bigoplus bigotimes bigsqcup bigstar bigtriangledown
+bigtriangleup biguplus bigvee bigwedge blacklozenge blacksquare blacktriangle
+blacktriangledown blacktriangleleft blacktriangleright bot bowtie boxdot boxminus boxplus
+boxtimes braceld bracelu bracerd braceru bracevert breve bullet bumpeq cap cdot cdotp
+centerdot check chi circ circeq circlearrowleft circlearrowright circledS circledast
+circledcirc circleddash clubsuit colon complement coprod coth cup curlyeqprec curlyeqsucc
+curlyvee curlywedge curvearrowleft curvearrowright dagger daleth dasharrow dashleftarrow
+dashrightarrow dashv ddagger ddot delta diagdown diagup diamond diamondsuit digamma div
+divideontimes dot doteq doteqdot dotplus dotsb dotsc dotsi dotsm dotso doublebarwedge
+doublecap doublecup downarrow downdownarrows downharpoonleft downharpoonright ell emptyset
+epsilon eqcirc eqsim eqslantgtr eqslantless equiv eta eth exists fallingdotseq flat forall
+frown gamma ge geq geqq geqslant gets gg ggg gggtr gimel gnapprox gneq gneqq gnsim grave
+gtrapprox gtrdot gtreqless gtreqqless gtrless gtrsim gvertneqq hat hbar heartsuit hom
+hookleftarrow hookrightarrow hslash imath in infty injlim intercal intop iota jmath kappa
+lambda land langle lbrace lceil ldotp le leadsto leftarrow leftarrowtail leftharpoondown
+leftharpoonup leftleftarrows leftrightarrow leftrightarrows leftrightharpoons
+leftrightsquigarrow leftthreetimes leq leqq leqslant lessapprox lessdot lesseqgtr lesseqqgtr
+lessgtr lesssim lfloor lgroup lhd lhook ll llcorner lll llless lmoustache lnapprox lneq lneqq
+lnot lnsim longleftrightarrow longmapsto looparrowleft looparrowright lor lozenge lrcorner
+ltimes lvertneqq mapstochar mathbin mathclose mathdollar mathinner mathop mathopen mathord
+mathparagraph mathpunct mathrel mathring mathsection measuredangle mho mid mp mu multimap
+nLeftarrow nLeftrightarrow nRightarrow nVDash nVdash nabla natural ncong nearrow neg nexists
+ngeq ngeqq ngeqslant ngtr ni nleftarrow nleftrightarrow nleq nleqq nleqslant nless nmid not
+nparallel nprec npreceq nrightarrow nshortmid nshortparallel nsim nsubseteq nsubseteqq nsucc
+nsucceq nsupseteq nsupseteqq ntriangleleft ntrianglelefteq ntriangleright ntrianglerighteq nu
+nvDash nvdash nwarrow odot ointop omega ominus oplus oslash otimes overleftarrow
+overleftrightarrow overrightarrow owns parallel partial perp phi pi pitchfork pm prec
+precapprox preccurlyeq preceq precnapprox precneqq precnsim precsim prime prod projlim propto
+psi rangle rbrace rceil restriction rfloor rgroup rhd rho rhook rightarrow rightarrowtail
+rightharpoondown rightharpoonup rightleftarrows rightleftharpoons rightrightarrows
+rightsquigarrow rightthreetimes risingdotseq rmoustache rtimes searrow setminus sharp shortmid
+shortparallel sigma sim simeq smallfrown smallint smallsetminus smallsmile smile spadesuit
+sphericalangle sqcap sqcup sqsubset sqsubseteq sqsupset sqsupseteq square star subset subseteq
+subseteqq subsetneq subsetneqq succ succapprox succcurlyeq succeq succnapprox succneqq
+succnsim succsim sum supset supseteq supseteqq supsetneq supsetneqq surd swarrow tau therefore
+theta thickapprox thicksim tilde times to top triangle triangledown triangleleft
+trianglelefteq triangleq triangleright trianglerighteq twoheadleftarrow twoheadrightarrow
+ulcorner underleftarrow underleftrightarrow underrightarrow unlhd unrhd uparrow updownarrow
+upharpoonleft upharpoonright uplus upsilon upuparrows urcorner vDash varbigtriangledown
+varbigtriangleup varepsilon varinjlim varkappa varliminf varlimsup varnothing varphi varpi
+varprojlim varpropto varrho varsigma varsubsetneq varsubsetneqq varsupsetneq varsupsetneqq
+vartheta vartriangle vartriangleleft vartriangleright vdash vec vee veebar vert wedge widehat
+widetilde wp wr xi xleftarrow xrightarrow zeta
+""".split())
 assignment = next(node for node in ast.parse(source).body if isinstance(node, ast.Assign)
                   and any(isinstance(target, ast.Name) and target.id == "_MATH_COMMANDS" for target in node.targets))
 supported = {word for node in ast.walk(assignment.value) if isinstance(node, ast.Constant)
@@ -96,7 +145,7 @@ for target, original, updated in patches:
     with target.open("w", encoding="utf-8", newline="\n") as stream:
         stream.write(updated)
     print("已修复排版，原文件备份：", backup)
-print("标准箭头、mid、bigoplus 及排版诊断已就绪；可重复运行。")
+print("标准数学符号与常用数学命令白名单已补齐，排版诊断已就绪；可重复运行。")
 PATCH_PY
 runuser -u qqbot -- env PYTHONDONTWRITEBYTECODE=1 "$APP_DIR/.venv/bin/python" - "$@" "$APP_DIR/data" <<'RENDER_PY'
 import asyncio

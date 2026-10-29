@@ -36,7 +36,7 @@ frac dfrac tfrac cfrac sqrt sin cos tan cot sec csc arcsin arccos arctan sinh co
 exp log ln lg lim limsup liminf sup inf max min sum prod coprod int iint iiint oint
 oplus otimes bigoplus bigcup bigcap cup cap partial nabla infty cdot times div pm mp ast star
 circ bullet cdots ldots vdots ddots dots le leq ge geq neq ne approx sim simeq equiv
-cong propto ll gg prec succ in notin ni mid subset subseteq supset supseteq emptyset
+cong propto ll gg prec succ preceq succeq in notin ni mid subset subseteq supset supseteq emptyset
 varnothing forall exists neg land lor wedge vee implies iff to rightarrow leftarrow
 Rightarrow Leftarrow leftrightarrow Leftrightarrow Longrightarrow Longleftarrow Longleftrightarrow longleftrightarrow mapsto longrightarrow longleftarrow
 uparrow downarrow lvert rvert lVert rVert vert Vert langle rangle lbrace rbrace
@@ -53,6 +53,43 @@ overset stackrel substack binom dbinom tbinom begin end hline cr det dim ker deg
 gcd Pr mod bmod pmod arg Re Im ell hbar angle triangle perpendicular perp parallel
 therefore because not smallsetminus setminus coloneqq colon backslash top bot prime
 lnot restriction vdash models
+Arrowvert Bbbk Box Bumpeq Cap Cup Diamond Doteq Downarrow Finv Game Lleftarrow Lsh Rrightarrow
+Rsh Subset Supset Uparrow Updownarrow Vdash Vvdash aleph amalg approxeq arrowvert asymp
+backepsilon backprime backsim backsimeq barwedge beth between bigcirc bigodot bigotimes
+bigsqcup bigstar bigtriangledown bigtriangleup biguplus bigvee bigwedge blacklozenge
+blacksquare blacktriangle blacktriangledown blacktriangleleft blacktriangleright boxdot
+boxminus boxplus boxtimes braceld bracelu bracerd braceru bracevert bumpeq cdotp centerdot
+circeq circlearrowleft circlearrowright circledS circledast circledcirc circleddash clubsuit
+complement curlyeqprec curlyeqsucc curlyvee curlywedge curvearrowleft curvearrowright dagger
+daleth dashv ddagger diagdown diagup diamond diamondsuit digamma divideontimes doteqdot dotplus
+doublebarwedge doublecap doublecup downdownarrows downharpoonleft downharpoonright eqcirc eqsim
+eqslantgtr eqslantless eth fallingdotseq flat frown geqq geqslant gets ggg gggtr gimel gnapprox
+gneq gneqq gnsim gtrapprox gtrdot gtreqless gtreqqless gtrless gtrsim gvertneqq heartsuit
+hslash imath intercal intop jmath ldotp leadsto leftarrowtail leftharpoondown leftharpoonup
+leftleftarrows leftrightarrows leftrightharpoons leftrightsquigarrow leftthreetimes leqq
+leqslant lessapprox lessdot lesseqgtr lesseqqgtr lessgtr lesssim lgroup lhd lhook llcorner lll
+llless lmoustache lnapprox lneq lneqq lnsim looparrowleft looparrowright lozenge lrcorner
+ltimes lvertneqq mapstochar mathdollar mathparagraph mathring mathsection measuredangle mho
+multimap nLeftarrow nLeftrightarrow nRightarrow nVDash nVdash natural ncong nearrow nexists
+ngeq ngeqq ngeqslant ngtr nleftarrow nleftrightarrow nleq nleqq nleqslant nless nmid nparallel
+nprec npreceq nrightarrow nshortmid nshortparallel nsim nsubseteq nsubseteqq nsucc nsucceq
+nsupseteq nsupseteqq ntriangleleft ntrianglelefteq ntriangleright ntrianglerighteq nvDash
+nvdash nwarrow odot ointop ominus oslash owns pitchfork precapprox preccurlyeq precnapprox
+precneqq precnsim precsim rgroup rhd rhook rightarrowtail rightharpoondown rightharpoonup
+rightleftarrows rightleftharpoons rightrightarrows rightsquigarrow rightthreetimes risingdotseq
+rmoustache rtimes searrow sharp shortmid shortparallel smallfrown smallint smallsmile smile
+spadesuit sphericalangle sqcap sqcup sqsubset sqsubseteq sqsupset sqsupseteq square subseteqq
+subsetneq subsetneqq succapprox succcurlyeq succnapprox succneqq succnsim succsim supseteqq
+supsetneq supsetneqq swarrow thickapprox thicksim triangledown triangleleft trianglelefteq
+triangleq triangleright trianglerighteq twoheadleftarrow twoheadrightarrow ulcorner unlhd unrhd
+updownarrow upharpoonleft upharpoonright uplus upuparrows urcorner vDash varbigtriangledown
+varbigtriangleup varkappa varpropto varsubsetneq varsubsetneqq varsupsetneq varsupsetneqq
+vartriangle vartriangleleft vartriangleright veebar wp wr
+Join bowtie coth dasharrow dashleftarrow dashrightarrow doteq dotsb dotsc dotsi dotsm dotso hom
+hookleftarrow hookrightarrow injlim longmapsto mathbin mathclose mathinner mathop mathopen
+mathord mathpunct mathrel overleftarrow overleftrightarrow overrightarrow projlim surd
+underleftarrow underleftrightarrow underrightarrow varinjlim varliminf varlimsup varprojlim
+xleftarrow xrightarrow
 """.split())
 _MATH_ENVIRONMENTS = {"aligned", "alignedat", "gathered", "split", "cases", "matrix",
                       "pmatrix", "bmatrix", "Bmatrix", "vmatrix", "Vmatrix", "smallmatrix", "array"}
