@@ -13,10 +13,8 @@ from uuid import uuid4
 from pdf_tools import PDFError, pdf_page_count, _select_pages
 
 BOOK_ID = r"B[0-9]{4,}"
-_BOOK_REFERENCE = re.compile(
-    rf"({BOOK_ID})\s+((?:第\s*)?[+\-]?\d[\d\s.第页+\-–—~～至到、,，和及/]*页)(?:\s+([\s\S]+))?",
-    re.I,
-)
+_BOOK_REQUEST = re.compile(rf"^\s*({BOOK_ID})\s+([\s\S]+)$", re.I)
+_BOOK_PAGE_SPEC = re.compile(r"(?:第\s*)?[+\-]?\d[\d\s.第页+\-–—~～至到、,，和及/]*页", re.I)
 
 
 class BookLibrary:
@@ -139,16 +137,24 @@ class BookLibrary:
                 db.execute("DELETE FROM books WHERE id=?", (row["id"],))
 
     def reference(self, args):
-        match = _BOOK_REFERENCE.fullmatch(args)
+        match = _BOOK_REQUEST.fullmatch(args)
         if not match:
             raise ValueError("请填写书籍编号和物理页码，例如 B0001 第3-5页。")
-        book_id, spec, tail = match.groups()
+        book_id, request = match.groups()
+        page = _BOOK_PAGE_SPEC.search(request)
+        if not page:
+            raise ValueError("请填写书籍编号和物理页码，例如 B0001 第3-5页。")
+        spec = page.group().strip()
         book = self.get_public(book_id)
         _, selected = _select_pages(spec, book["pages"])
         if not selected:
             raise PDFError("引用书籍时请指定页码。")
+        if page.start() == 0:
+            tail = re.sub(r"^(?:的|[，,。:：])\s*", "", request[page.end():].strip())
+        else:
+            tail = request.strip()
         return {"book_id": book["_storage_id"], "name": book["title"] + ".pdf",
-                "pdf_selection": spec}, (tail or "").strip()
+                "pdf_selection": spec}, tail
 
 
 def main():
