@@ -377,14 +377,30 @@ class TaskCommands:
                     await self._text(context, f"已移除 {book['id']} 《{book['title']}》。"
                                               "已登记且仍需此书的任务可以继续读取。")
                     return
-                if len(attachments) != 1 or not _is_pdf(attachments[0]) or not args:
+                if not args:
                     await self._text(context, "同条附一个 PDF，格式为 /入库 书名 | 简介，简介可省略。")
+                    return
+                pdfs = [item for item in attachments if _is_pdf(item)]
+                if len(pdfs) > 1:
+                    await self._text(context, "检测到多份 PDF，请在同一条消息中只附一份 PDF。")
+                    return
+                if pdfs:
+                    attachment = pdfs[0]
+                elif len(attachments) == 1:
+                    # QQ may omit the filename or use a generic MIME type for a file card.
+                    # Let BookLibrary.add validate the downloaded bytes as a real PDF.
+                    attachment = attachments[0]
+                elif not attachments:
+                    await self._text(context, "没有收到附件。请在同一条消息中发送入库指令并附一份 PDF。")
+                    return
+                else:
+                    await self._text(context, "收到多个附件但无法确定哪份是 PDF，请只附一份 PDF 后重试。")
                     return
                 if self.book_import_lock.locked():
                     await self._text(context, "正在导入另一份书籍，请稍后再试。")
                     return
                 async with self.book_import_lock:
-                    url = attachments[0].get("url", "")
+                    url = attachment.get("url", "")
                     if url.startswith("//"):
                         url = "https:" + url
                     elif url and "://" not in url:
