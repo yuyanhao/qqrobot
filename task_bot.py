@@ -70,6 +70,12 @@ class TaskBot(TaskCommands, TaskQueue, TaskDelivery, botpy.Client):
         self.collection_lock = asyncio.Lock()
         self.book_import_lock = asyncio.Lock()
         self.book_admin_openid = os.getenv("BOOK_ADMIN_OPENID", "").strip()
+        self.pending_book_uploads = {}
+        for pending_file in self.store.root.glob(".book-upload-*.pdf"):
+            try:
+                pending_file.unlink(missing_ok=True)
+            except OSError:
+                log.warning("pending_book_upload_cleanup_failed")
         self.worker_task = None
         self.cleanup_task = None
         self.running_task = None
@@ -135,6 +141,10 @@ class TaskBot(TaskCommands, TaskQueue, TaskDelivery, botpy.Client):
         quoted, attachments, quoted_urls = collect_attachments(message, raw)
         if kind == "c2c" and not text.startswith("/"):
             pdfs = [item for item in attachments if _is_pdf(item)]
+            if (target == self.book_admin_openid and attachments
+                    and not any(item["url"] in quoted_urls for item in attachments)):
+                await self._stage_book_upload(context, attachments)
+                return
             if pdfs and not (text and any(item["url"] in quoted_urls for item in pdfs)):
                 return
         await self._dispatch_command(context, text, quoted, attachments, quoted_urls=quoted_urls)

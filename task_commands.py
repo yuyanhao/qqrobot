@@ -4,8 +4,11 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 import re
 import sqlite3
+import tempfile
+import time
 
 from aiohttp import ClientError
 
@@ -18,6 +21,7 @@ from task_store import ACTIVE, STATES, TASK_RE, confirmation_key, describe
 
 QUESTION_REFERENCE = re.compile(r"#?(" + TASK_RE + r")(?:\s+([\s\S]+))?", re.I)
 FAVORITES_PER_PAGE = 8
+PENDING_BOOK_UPLOAD_TTL_SECONDS = 15 * 60
 TASK_ARGUMENTS = {
     "进度": "", "结果": "", "图片": " [起始页]", "取消": "", "重试": "",
     "追问": " 具体问题", "补充": " 补充条件", "补图": "（同条附图）", "开始": "", "PDF": "",
@@ -56,6 +60,7 @@ HELP = ("直接发送数学物理题的文字或图片即可获得题号。\n"
         "/复习 [题号]：选一道收藏或领取这题的题目和答案；/取消收藏 题号：移除收藏\n"
         "/错题本：按收藏时间生成当前会话的全部收藏 PDF\n"
         "/书库：查看共享书籍；/引用 B0001 第3-5页 [要求]：用指定书页解题；写明第几题时只识别该题及其小问\n"
+        "管理员私聊：先发送 PDF，确认暂存成功后 15 分钟内发送 /入库 书名；无需引用或重发\n"
         "/补充 题号 补充条件：可用文字或同条附图补充条件\n"
         "/收集 [说明或原题号]：先收齐多张题图，暂不解题\n"
         "/补图 收集题号 [PDF页码]：同条附图或 PDF，分批追加材料\n"
@@ -74,6 +79,82 @@ HELP = ("直接发送数学物理题的文字或图片即可获得题号。\n"
 
 class TaskCommands:
     """Command routing for the bot's text replies, queue and stored results."""
+
+    def _schedule_pending_book_upload_expiry(self, target, path, delay):
+        asyncio.get_running_loop().call_later(
+            delay, lambda: asyncio.create_task(self._expire_pending_book_upload(target, path))
+        )
+
+    async def _expire_pending_book_upload(self, target, path):
+        async with self.book_import_lock:
+            pending = self.pending_book_uploads.get(target)
+            if not pending or pending[1] != path:
+                return
+            remaining = pending[0] + PENDING_BOOK_UPLOAD_TTL_SECONDS - time.monotonic()
+            if remaining > 0:
+                self._schedule_pending_book_upload_expiry(target, path, remaining)
+                return
+            self.pending_book_uploads.pop(target, None)
+            with suppress(OSError):
+                path.unlink(missing_ok=True)
+
+    async def _stage_book_upload(self, context, attachments):
+        if context.kind != "c2c" or context.target != getattr(self, "book_admin_openid", ""):
+            return
+        pdfs = [item for item in attachments if _is_pdf(item)]
+        if len(pdfs) > 1:
+            await self._text(context, "一次只能暂存一份 PDF，请只发送一本书的文件。")
+            return
+        if pdfs:
+            attachment = pdfs[0]
+        elif len(attachments) == 1:
+            attachment = attachments[0]
+        else:
+            await self._text(context, "请一次只发送一份 PDF 作为待入库书籍。")
+            return
+
+        url = attachment.get("url", "")
+        if url.startswith("//"):
+            url = "https:" + url
+        elif url and "://" not in url:
+            url = "https://" + url
+        if not url:
+            await self._text(context, "QQ 没有提供这份文件的下载地址，请等文件上传完成后再发送一次。")
+            return
+
+        staged = None
+        try:
+            async with self.book_import_lock:
+                with tempfile.NamedTemporaryFile(
+                    prefix=".book-upload-", suffix=".pdf", dir=self.store.root, delete=False
+                ) as output:
+                    staged = Path(output.name)
+                    await download_file(url, max_mb=None, timeout=None, output=output)
+                with staged.open("rb") as uploaded:
+                    if b"%PDF-" not in uploaded.read(1024):
+                        staged.unlink(missing_ok=True)
+                        await self._text(context, "这不是 PDF 文件，书库只接受 PDF。")
+                        return
+                previous = self.pending_book_uploads.get(context.target)
+                self.pending_book_uploads[context.target] = (time.monotonic(), staged)
+                self._schedule_pending_book_upload_expiry(
+                    context.target, staged, PENDING_BOOK_UPLOAD_TTL_SECONDS
+                )
+                if previous:
+                    with suppress(OSError):
+                        previous[1].unlink(missing_ok=True)
+        except (ClientError, DownloadError, OSError):
+            if staged:
+                with suppress(OSError):
+                    staged.unlink(missing_ok=True)
+            await self._text(context, "PDF 暂存失败，请稍后重发一次文件；还没有进行入库。")
+            return
+        except BaseException:
+            if staged:
+                with suppress(OSError):
+                    staged.unlink(missing_ok=True)
+            raise
+        await self._text(context, "已收到并暂存这份 PDF（15 分钟有效）。请接着发送 /入库 书名，可加 | 简介；无需引用或再次发送文件。")
 
     async def _dispatch_command(self, context, text, quoted, attachments, *, quoted_urls=()):
         if text in ("/帮助", "帮助", "/help", "你好", "您好"):
@@ -364,6 +445,8 @@ class TaskCommands:
         await self._submit(context, request)
 
     async def _book_command(self, context, action, args, attachments):
+        if not hasattr(self, "pending_book_uploads"):
+            self.pending_book_uploads = {}
         library = BookLibrary(self.store.root)
         try:
             if action in ("入库", "移除书籍"):
@@ -378,7 +461,7 @@ class TaskCommands:
                                               "已登记且仍需此书的任务可以继续读取。")
                     return
                 if not args:
-                    await self._text(context, "同条附一个 PDF，格式为 /入库 书名 | 简介，简介可省略。")
+                    await self._text(context, "格式：/入库 书名 | 简介（简介可省略）。也可先发送 PDF，收到暂存确认后再发入库命令。")
                     return
                 pdfs = [item for item in attachments if _is_pdf(item)]
                 if len(pdfs) > 1:
@@ -391,32 +474,57 @@ class TaskCommands:
                     # Let BookLibrary.add validate the downloaded bytes as a real PDF.
                     attachment = attachments[0]
                 elif not attachments:
-                    await self._text(context, "没有收到附件。请在同一条消息中发送入库指令并附一份 PDF。")
-                    return
+                    attachment = None
                 else:
                     await self._text(context, "收到多个附件但无法确定哪份是 PDF，请只附一份 PDF 后重试。")
                     return
-                if self.book_import_lock.locked():
-                    await self._text(context, "正在导入另一份书籍，请稍后再试。")
-                    return
                 async with self.book_import_lock:
-                    url = attachment.get("url", "")
-                    if url.startswith("//"):
-                        url = "https:" + url
-                    elif url and "://" not in url:
-                        url = "https://" + url
                     title, _, summary = args.replace("｜", "|", 1).partition("|")
-                    with library.staged_pdf() as staged:
-                        with staged.open("xb") as output:
-                            await download_file(url, max_mb=None, timeout=None, output=output)
-                        registration = asyncio.create_task(asyncio.to_thread(library.add, staged, title, summary))
+                    pending = self.pending_book_uploads.get(context.target) if attachment is None else None
+                    if (pending and (time.monotonic() - pending[0] > PENDING_BOOK_UPLOAD_TTL_SECONDS
+                                     or not pending[1].is_file())):
+                        self.pending_book_uploads.pop(context.target, None)
+                        with suppress(OSError):
+                            pending[1].unlink(missing_ok=True)
+                        pending = None
+                    if attachment is None and pending is None:
+                        await self._text(context, "没有可用的待入库 PDF。请先私聊发送一份 PDF，收到暂存确认后再发 /入库 书名。")
+                        return
+
+                    if pending:
+                        source_path = pending[1]
+                        registration = asyncio.create_task(
+                            asyncio.to_thread(library.add, source_path, title, summary)
+                        )
                         try:
                             book = await asyncio.shield(registration)
                         except asyncio.CancelledError:
-                            # Keep the staged file alive until the catalog update has finished.
                             with suppress(Exception):
                                 await registration
                             raise
+                    else:
+                        url = attachment.get("url", "")
+                        if url.startswith("//"):
+                            url = "https:" + url
+                        elif url and "://" not in url:
+                            url = "https://" + url
+                        with library.staged_pdf() as staged:
+                            with staged.open("xb") as output:
+                                await download_file(url, max_mb=None, timeout=None, output=output)
+                            registration = asyncio.create_task(
+                                asyncio.to_thread(library.add, staged, title, summary)
+                            )
+                            try:
+                                book = await asyncio.shield(registration)
+                            except asyncio.CancelledError:
+                                # Keep the staged file alive until the catalog update has finished.
+                                with suppress(Exception):
+                                    await registration
+                                raise
+                    completed_pending = self.pending_book_uploads.pop(context.target, None)
+                    if completed_pending:
+                        with suppress(OSError):
+                            completed_pending[1].unlink(missing_ok=True)
                 await self._text(context, f"已入库 {book['id']} 《{book['title']}》，共 {book['pages']} 页。")
                 return
             if action == "引用" and re.match(rf"{BOOK_ID}\s+", args, re.I):
