@@ -103,12 +103,14 @@ class Solver:
         image_total, picture_total, batches = 0, 0, 0
         needs_confirmation = False
 
-        async def transcribe_batch(label=None):
+        async def transcribe_batch(label=None, question_target=""):
             nonlocal batches, needs_confirmation
             if not images:
                 return
             batches += 1
             options = {"draft": True} if draft else {}
+            if question_target and not draft:
+                options["question_target"] = question_target
             recognized = await self.ai.transcribe(images, request.get("text", ""), **options)
             label = label or f"图片/PDF 转写（第 {batches} 批）"
             blocks.append(label + "：\n" + recognized["problem_latex"])
@@ -146,7 +148,9 @@ class Solver:
                             images.extend((page, "image/png") for page in pages)
                             image_total += len(pages)
                             origin = item.get("book_id") or f"PDF 附件 {index + 1}"
-                            await transcribe_batch(f"{origin}（共 {total} 页，第 {'、'.join(map(str, numbers))} 页）")
+                            await transcribe_batch(
+                                f"{origin}（共 {total} 页，第 {'、'.join(map(str, numbers))} 页）",
+                                question_target=item.get("question_target", ""))
                             numbers_read.extend(numbers)
                     scope = "已读取全部页面" if not selected else "已读取指定页面"
                     input_notes.append(f"PDF 附件 {index + 1} 共 {total} 页，{scope}，本次读取第 {'、'.join(map(str, numbers_read))} 页")
