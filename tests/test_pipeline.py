@@ -59,7 +59,7 @@ def test_text_attachment_is_in_actual_problem(monkeypatch, tmp_path):
     store.close()
 
 
-def test_failed_pdf_keeps_text_and_points_to_text_command(monkeypatch, tmp_path):
+def test_failed_pdf_keeps_text_and_reports_failed_render(monkeypatch, tmp_path):
     class FakeAI:
         async def plan_problem(self, problem, extra):
             return {"accepted": True, "domain": "math", "needs_search": False, "search_query": ""}
@@ -79,7 +79,7 @@ def test_failed_pdf_keeps_text_and_points_to_text_command(monkeypatch, tmp_path)
         row = store.get(task["task_id"])
         assert row["state"] == "completed"
         assert Path(row["result"]["text_path"]).is_file()
-        assert f"/文字 {task['task_id']} 1" in row["result"]["notes"]
+        assert "PDF 排版未完成" in row["result"]["notes"]
         assert "用题号领取文本文件" not in row["result"]["notes"]
         assert not row["result"].get("pdf_path")
     finally:

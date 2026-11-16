@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from file_tools import DownloadError, download_file
 from message_input import _is_pdf, _is_text_file
+from pdf_tools import MAX_INPUT_PDF_MB
 
 
 class InputCacheError(ValueError):
@@ -15,7 +16,11 @@ class InputCacheError(ValueError):
 
 
 def attachment_limit(item):
-    return 20 if _is_pdf(item) else 2 if _is_text_file(item) else 8
+    return MAX_INPUT_PDF_MB if _is_pdf(item) else 2 if _is_text_file(item) else 8
+
+
+def attachment_key(item, field):
+    return item.get(field), item.get("pdf_selection", "")
 
 
 def cached_path(store, task, item):
@@ -57,8 +62,8 @@ async def cache_attachments(store, task, attachments, *, max_total_mb=512):
     if len(attachments) > 4:
         raise InputCacheError("每条消息最多 4 个附件，可分多条用 /补图 追加")
     previous = task["request"].get("attachments", [])
-    urls = {item.get("url") for item in previous}
-    hashes = {item.get("sha256") for item in previous}
+    urls = {attachment_key(item, "url") for item in previous}
+    hashes = {attachment_key(item, "sha256") for item in previous}
     added = []
     try:
         for original in attachments:
@@ -69,12 +74,13 @@ async def cache_attachments(store, task, attachments, *, max_total_mb=512):
                 url = "https://" + url
             if not url:
                 raise InputCacheError("图片没有可用下载地址，请重新发送原图")
-            if url in urls:
+            selection = original.get("pdf_selection", "")
+            if (url, selection) in urls:
                 continue
-            urls.add(url)
+            urls.add((url, selection))
             file = await download_file(url, max_mb=attachment_limit(original), timeout=45)
             digest = hashlib.sha256(file.data).hexdigest()
-            if digest in hashes:
+            if (digest, selection) in hashes:
                 continue
             if len(previous) + len(added) >= 12:
                 raise InputCacheError("同一道收集题最多 12 个附件，请分题提交")
@@ -90,7 +96,7 @@ async def cache_attachments(store, task, attachments, *, max_total_mb=512):
             directory.mkdir(exist_ok=True)
             added.append(item)
             cached_path(store, task, item).write_bytes(file.data)
-            hashes.add(digest)
+            hashes.add((digest, selection))
         return added
     except BaseException as exc:
         discard_cached_attachments(store, task, added)

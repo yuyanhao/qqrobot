@@ -81,12 +81,12 @@ class QQMedia:
         if kind not in ("group", "c2c"): raise QQMediaError("未知会话类型")
         return "/v2/" + ("groups/" if kind == "group" else "users/") + quote(target, safe="")
 
-    async def _request(self, path, payload):
+    async def _request(self, path, payload=None, *, method="POST", params=None):
         for attempt in range(2):
             token = await self._get_token()
             session = await self._get_session()
             try:
-                async with session.post(self.base + path, json=payload,
+                async with session.request(method, self.base + path, json=payload, params=params,
                                         headers={"Authorization": f"QQBot {token}", "X-Union-Appid": self.appid},
                                         allow_redirects=False) as resp:
                     raw = await resp.content.read(1024 * 1024)
@@ -104,7 +104,8 @@ class QQMedia:
                     return data
             except QQMediaError: raise
             except (aiohttp.ClientError, TimeoutError) as exc:
-                raise QQMediaError("QQ 网络请求失败；未自动重复发送消息", "network") from exc
+                message = "QQ 网络请求失败；未自动重复发送消息" if method == "POST" else "QQ 网络请求失败"
+                raise QQMediaError(message, "network") from exc
         raise QQMediaError("QQ 鉴权失败", "auth")
 
     @staticmethod
@@ -175,6 +176,21 @@ class QQMedia:
 
     async def send_text(self, kind, target, text, msg_id=None, msg_seq=None):
         await self._send_payload(kind, target, {"msg_type": 0, "content": text}, msg_id, msg_seq)
+
+    async def send_command_choices(self, kind, target, text, choices, msg_id=None, msg_seq=None):
+        rows = [
+            {"buttons": [{
+                "id": str(index),
+                "render_data": {"label": label, "visited_label": label, "style": 1},
+                "action": {
+                    "type": 2, "permission": {"type": 2}, "data": command,
+                    "enter": False, "reply": False, "unsupport_tips": "请复制消息中的指令。",
+                },
+            }]}
+            for index, (label, command) in enumerate(choices, 1)
+        ]
+        payload = {"msg_type": 0, "content": text, "keyboard": {"content": {"rows": rows}}}
+        await self._send_payload(kind, target, payload, msg_id, msg_seq)
 
     async def send_image(self, kind, target, file_info, msg_id=None, msg_seq=None):
         await self._send_payload(kind, target, {"msg_type": 7, "media": {"file_info": file_info}}, msg_id, msg_seq)

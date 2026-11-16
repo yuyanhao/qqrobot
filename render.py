@@ -26,6 +26,7 @@ class RenderError(RuntimeError):
 
 
 def escape_text(text: str) -> str:
+    text = re.sub(r"[\x00-\x08\x0b-\x1f\u2028\u2029]", " ", text or "")
     text = "".join(_SPECIAL.get(ch, ch) for ch in (text or ""))
     text = re.sub(r"\n\s*\n", r"\\par ", text)
     return text.replace("\n", " ").strip()
@@ -370,8 +371,8 @@ def render_math(math: str) -> str:
     return "\\[\n" + math + "\n\\]"
 
 
-def _header(title: str, fontsize: str = "11pt", margin: str = "1.7cm") -> str:
-    title_tex = render_inline(title)
+def _header(title: str, fontsize: str = "11pt", margin: str = "1.7cm", *, plain=False) -> str:
+    title_tex = escape_text(title) if plain else render_inline(title)
     return rf"""\documentclass[{fontsize},a4paper,fontset=fandol]{{ctexart}}
 \usepackage[margin={margin}]{{geometry}}
 \usepackage{{amsmath,amssymb,mathtools,bm}}
@@ -395,7 +396,7 @@ def _header(title: str, fontsize: str = "11pt", margin: str = "1.7cm") -> str:
 """
 
 
-def build_tex(doc: dict) -> str:
+def build_tex(doc: dict, *, plain=False, body_only=False) -> str:
     title = str(doc.get("title") or "解题过程")
     steps = doc.get("steps", [])
     if not isinstance(steps, list):
@@ -411,11 +412,13 @@ def build_tex(doc: dict) -> str:
     fontsize = "10pt" if compact else "11pt"
     margin = "1.4cm" if compact else "1.7cm"
 
-    problem = render_field(str(doc.get("problem_latex") or ""), display=True)
-    answer = render_field(str(doc.get("answer_latex") or ""), display=False)
-    check = render_field(str(doc.get("check_latex") or ""), display=False)
+    def field(name, display=False):
+        value = str(doc.get(name) or "")
+        return escape_text(value) if plain else render_field(value, display=display)
 
-    lines = [_header(title, fontsize, margin)]
+    problem, answer, check = field("problem_latex", True), field("answer_latex"), field("check_latex")
+    lines = ([r"\section*{" + escape_text(title) + "}"] if body_only
+             else [_header(title, fontsize, margin, plain=plain)])
     lines.append(
         r"\begin{tcolorbox}[breakable,colback=gray!5,colframe=gray!45,"
         r"title=题目,fonttitle=\bfseries]"
@@ -427,8 +430,9 @@ def build_tex(doc: dict) -> str:
     for step in steps:
         if not isinstance(step, dict):
             continue
-        text = render_inline(str(step.get("text") or ""))
-        math = render_math(str(step.get("math") or ""))
+        text_value, math_value = str(step.get("text") or ""), str(step.get("math") or "")
+        text = escape_text(text_value) if plain else render_inline(text_value)
+        math = escape_text(math_value) if plain else render_math(math_value)
         if text:
             lines.append(text)
         if math:
@@ -451,5 +455,11 @@ def build_tex(doc: dict) -> str:
         lines.append(check)
         lines.append(r"\end{tcolorbox}")
 
-    lines.append(r"\end{document}")
+    if not body_only:
+        lines.append(r"\end{document}")
     return "\n".join(lines)
+
+
+def build_favorites_tex(title, entries, *, plain=False):
+    bodies = [build_tex(entry["doc"], plain=plain or entry["plain"], body_only=True) for entry in entries]
+    return "\n".join((_header(title, plain=True), "\n\\clearpage\n".join(bodies), r"\end{document}"))

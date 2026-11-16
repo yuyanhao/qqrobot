@@ -139,7 +139,7 @@ def test_result_and_pdf_commands_route_without_new_jobs(tmp_path, prefix, is_pdf
 
 @pytest.mark.parametrize("mode", ["结果", "PDF"])
 @pytest.mark.parametrize("missing_file", [False, True])
-def test_missing_pdf_offers_text_instead_of_sending_txt_as_pdf(tmp_path, mode, missing_file):
+def test_missing_pdf_is_reported_without_uploading_text_as_pdf(tmp_path, mode, missing_file):
     async def check():
         bot = make_bot(tmp_path)
         try:
@@ -153,11 +153,43 @@ def test_missing_pdf_offers_text_instead_of_sending_txt_as_pdf(tmp_path, mode, m
             await bot._deliver(bot.store.get(task["task_id"]), context(), mode)
             assert not bot.media.uploaded
             assert all(item[0] == "text" for item in bot.media.sent)
-            assert any("/文字" in item[1] for item in bot.media.sent)
+            reply = bot.media.sent[0][1]
+            if mode == "PDF":
+                assert "没有可用 PDF" in reply
+                assert bot.store.get(task["task_id"])["delivery"] == "awaiting_query"
+            else:
+                assert "完整文字解答" in reply
+                assert bot.store.get(task["task_id"])["delivery"] == "delivered"
             assert Path(task["result"]["text_path"]).is_file()
-            assert bot.store.get(task["task_id"])["delivery"] == "awaiting_query"
         finally:
             bot.store.close()
+    asyncio.run(check())
+
+
+def test_result_pages_deliver_saved_text_without_creating_a_followup(tmp_path):
+    async def check():
+        bot = make_bot(tmp_path)
+        try:
+            task = saved_answer(bot)
+            tid = task["task_id"]
+            result = task["result"]
+            Path(result["pdf_path"]).unlink()
+            Path(result["text_path"]).write_text(
+                "开头的推导\n" + "甲" * 1450 + "\n末尾的结论", encoding="utf-8")
+            result.update(answer_status="uncertain", verification="未完成（服务重启中断）")
+            bot.store.update(tid, result=result)
+            for event, text in enumerate((f"/结果 {tid}", f"/结果 {tid} 第2段", f"/结果 {tid} 第99段")):
+                await bot._handle(SimpleNamespace(id=str(event), content=text), "c2c", "u", "u")
+            first, second, invalid = (item[1] for item in bot.media.sent)
+            assert "开头的推导" in first and f"/结果 {tid} 第2段" in first
+            assert "末尾的结论" in second and "开头的推导" not in second
+            assert "未完成（服务重启中断）" in first and "未完成（服务重启中断）" in second
+            assert "没有第 99 段" in invalid
+            assert bot.queue.empty()
+            assert len(bot.store.list_recent("u")) == 1
+        finally:
+            bot.store.close()
+
     asyncio.run(check())
 
 
@@ -271,7 +303,7 @@ def test_registration_only_appends_help_command(tmp_path, action):
     asyncio.run(check())
 
 
-def test_help_feedback_contains_all_eleven_main_commands(tmp_path):
+def test_help_feedback_contains_main_commands(tmp_path):
     async def check():
         bot = make_bot(tmp_path)
         try:
@@ -279,7 +311,7 @@ def test_help_feedback_contains_all_eleven_main_commands(tmp_path):
             assert len(bot.media.sent) == 1 and bot.media.sent[0][0] == "text"
             assert bot.media.sent[0][1] == HELP
             assert len(HELP) <= 1800
-            for command in ("/结果", "/PDF", "/进度", "/图片", "/文字", "/追问", "/补充", "/取消", "/重试", "/题目", "/帮助"):
+            for command in ("/结果", "/PDF", "/进度", "/图片", "/查错", "/追问", "/补充", "/取消", "/重试", "/题目", "/帮助"):
                 assert command in HELP
             assert bot.queue.empty()
         finally:
@@ -336,7 +368,7 @@ def test_legacy_result_without_page_count_recovers_metadata_and_delivery_mode(tm
                 calls.append((pdf_path, directory, start_page, count))
                 return {"total_pages": pages, "preview_paths": expected_previews}
 
-            monkeypatch.setattr("task_bot.render_preview_async", recover)
+            monkeypatch.setattr("task_delivery.render_preview_async", recover)
             await bot._deliver(bot.store.get(tid), context())
             assert calls == [(Path(result["pdf_path"]), bot.store.task_dir(tid), 1, 3)]
             row = bot.store.get(tid)
@@ -369,7 +401,7 @@ def test_legacy_three_page_result_regenerates_missing_third_preview(tmp_path, mo
                 return {"total_pages": 3, "preview_paths": [
                     str(directory / f"preview-{page:03d}.png") for page in range(1, 4)]}
 
-            monkeypatch.setattr("task_bot.render_preview_async", regenerate)
+            monkeypatch.setattr("task_delivery.render_preview_async", regenerate)
             await bot._deliver(bot.store.get(tid), context(seq=1))
             assert calls == [(Path(result["pdf_path"]), bot.store.task_dir(tid), 1, 3)]
             assert third.read_bytes() == b"regenerated third page"
@@ -397,7 +429,7 @@ def test_legacy_missing_preview_waits_for_render_lock_and_offers_pdf(tmp_path, m
                 calls.append(args)
                 raise AssertionError("another task owns the rendering lock")
 
-            monkeypatch.setattr("task_bot.render_preview_async", should_not_render)
+            monkeypatch.setattr("task_delivery.render_preview_async", should_not_render)
             await bot.resource_lock.acquire()
             try:
                 await bot._deliver(bot.store.get(tid), context())

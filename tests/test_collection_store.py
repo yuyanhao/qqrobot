@@ -166,7 +166,7 @@ def test_expired_collection_is_cleaned_using_existing_retention(store):
     store.db.commit()
     store.cleanup()
     expired = store.get(task["task_id"])
-    assert expired["state"] == "expired" and expired["request"] == {}
+    assert expired is None
     assert not directory.exists() and store.collecting("alice") is None
 
 

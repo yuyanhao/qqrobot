@@ -38,7 +38,7 @@ def test_taskbot_uses_same_origin_and_delivery_setting_for_both_transports(monke
     monkeypatch.setattr("botpy.Client.__init__", lambda self, **kwargs: None)
     monkeypatch.setattr("task_bot.DeepSeek", lambda *args, **kwargs: object())
     monkeypatch.setattr("task_bot.TaskStore", lambda directory: SimpleNamespace(
-        recover=lambda: None, cleanup=lambda ttl: None))
+        root=directory, recover=lambda: None, cleanup=lambda ttl: None, pending_book_ids=lambda ttl: set()))
     bot = TaskBot(None, settings=Settings(data_dir=tmp_path, active_delivery=True))
     assert bot.media.base == "https://qq-api.example:8443"
     assert Route("GET", "/gateway").url == bot.media.base + "/gateway"

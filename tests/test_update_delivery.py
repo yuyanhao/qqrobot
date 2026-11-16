@@ -2,8 +2,13 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
 
-NAMES = ("render.py", "render_worker.py", "render_service.py", "input_cache.py", "solver.py", "task_bot.py", "task_store.py", "search_tools.py", "settings.py", "pdf_tools.py", "ai.py", "qqmedia.py")
+
+BOT_MODULES = ("task_commands.py", "task_queue.py", "task_delivery.py", "book_library.py", "qq_panel.py")
+NAMES = ("render.py", "render_worker.py", "render_service.py", "input_cache.py", "solver.py", "task_bot.py",
+         *BOT_MODULES, "task_store.py", "search_tools.py", "settings.py", "pdf_tools.py", "ai.py",
+         "qqmedia.py", "file_tools.py", "message_input.py")
 
 
 def update_block():
@@ -84,14 +89,15 @@ os.replace = fail_second_replace
     assert not list(target.glob(".delivery-update-*"))
 
 
-def test_update_installs_new_cache_module_without_existing_file(tmp_path):
+@pytest.mark.parametrize("module", ["input_cache.py", *BOT_MODULES])
+def test_update_installs_new_module_without_existing_file(tmp_path, module):
     source, target = installation(tmp_path)
-    (target / "input_cache.py").unlink()
+    (target / module).unlink()
     assert run_update(source, target, "check").returncode == 0
-    assert not (target / "input_cache.py.before-image-delivery").exists()
+    assert not (target / f"{module}.before-image-delivery").exists()
     assert run_update(source, target, "install").returncode == 0
-    assert (target / "input_cache.py").read_bytes() == (source / "input_cache.py").read_bytes()
-    assert not (target / "input_cache.py.before-image-delivery").exists()
+    assert (target / module).read_bytes() == (source / module).read_bytes()
+    assert not (target / f"{module}.before-image-delivery").exists()
     assert (target / ".env").read_text(encoding="utf-8") == "synthetic config\n"
     assert (target / "data" / "tasks.sqlite3").read_bytes() == b"synthetic task data"
 

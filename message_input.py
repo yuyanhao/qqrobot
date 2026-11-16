@@ -91,38 +91,29 @@ def _decode_text(data: bytes) -> str:
             continue
     return data.decode("utf-8", errors="replace")
 
-def collect_attachments(message, raw: dict) -> tuple[str, list[dict]]:
-    """当前消息附件 + 引用消息附件，按 URL 去重。"""
+def collect_attachments(message, raw: dict) -> tuple[str, list[dict], set[str]]:
+    """收集附件并按 URL 去重，同时保留引用附件的来源。"""
     quoted_text, quoted_attachments = extract_quoted(raw)
-    items: list[dict] = []
-    seen: set[str] = set()
-
-    for attachment in getattr(message, "attachments", None) or []:
-        url = _attachment_field(
-            attachment, ("url", "file_url", "fileUrl", "download_url", "downloadUrl")
-        )
-        content_type = _attachment_field(
-            attachment, ("content_type", "contentType", "mime_type")
-        )
-        name = _attachment_field(attachment, ("filename", "file_name", "name"))
-        if url and url not in seen:
-            items.append(
-                {"url": url, "content_type": content_type, "name": name}
+    current = raw.get("attachments") or getattr(message, "attachments", None) or []
+    items: dict[str, dict] = {}
+    quoted_urls = set()
+    for attachments, from_quote in ((current, False), (quoted_attachments, True)):
+        for attachment in attachments:
+            url = _attachment_field(
+                attachment, ("url", "file_url", "fileUrl", "download_url", "downloadUrl")
             )
-            seen.add(url)
+            if not url:
+                continue
+            item = {
+                "url": url,
+                "content_type": _attachment_field(attachment, ("content_type", "contentType", "mime_type")),
+                "name": _attachment_field(attachment, ("filename", "file_name", "name")),
+            }
+            if from_quote:
+                quoted_urls.add(url)
+                if _is_pdf(item):
+                    items[url] = item
+                    continue
+            items.setdefault(url, item)
 
-    for attachment in quoted_attachments:
-        url = _attachment_field(
-            attachment, ("url", "file_url", "fileUrl", "download_url", "downloadUrl")
-        )
-        content_type = _attachment_field(
-            attachment, ("content_type", "contentType", "mime_type")
-        )
-        name = _attachment_field(attachment, ("filename", "file_name", "name"))
-        if url and url not in seen:
-            items.append(
-                {"url": url, "content_type": content_type, "name": name}
-            )
-            seen.add(url)
-
-    return quoted_text, items
+    return quoted_text, list(items.values()), quoted_urls

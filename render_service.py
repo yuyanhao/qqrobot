@@ -3,14 +3,26 @@ from __future__ import annotations
 
 import json
 from contextlib import aclosing
+import os
 from pathlib import Path
 import re
+import shutil
 
 from process_tools import run_worker
 from pdf_tools import PDFError
 from render import RenderError
 
 WORKER = Path(__file__).with_name("render_worker.py")
+
+
+async def render_favorites_async(title, entries, directory):
+    request = directory / "favorite-request.json"
+    request.write_text(json.dumps({"mode": "favorites", "title": title, "entries": entries},
+                                  ensure_ascii=False), encoding="utf-8")
+    try:
+        return json.loads(await run_worker(WORKER, directory, (request.name,), timeout=180))
+    except (RuntimeError, OSError, TimeoutError) as exc:
+        raise RenderError(str(exc)) from exc
 
 
 async def render_artifacts_async(doc: dict, output_dir: Path, task_id: str,
@@ -75,19 +87,26 @@ async def render_input_pdf_async(data: bytes, directory: Path, text: str = "",
     return images, total, numbers, selected
 
 
-async def render_input_pdf_batches_async(data: bytes, directory: Path, text: str = "",
+async def render_input_pdf_batches_async(data: bytes | Path, directory: Path, text: str = "",
                                          max_pages: int = 0, dpi: int = 160, timeout: int = 60):
     """Keep one input PDF on disk and yield at most four page images at a time."""
     directory = directory.resolve()
     directory.mkdir(parents=True, exist_ok=True)
     pdf, request = directory / "input.pdf", directory / "input-request.json"
     try:
-        pdf.write_bytes(data)
+        if isinstance(data, Path):
+            try:
+                os.link(data, pdf)
+            except OSError:
+                shutil.copyfile(data, pdf)
+        else:
+            pdf.write_bytes(data)
         offset = 0
         while True:
             request.write_text(json.dumps({"mode": "input", "text": text,
                                           "max_pages": max_pages, "dpi": dpi,
-                                          "offset": offset, "count": 4}), encoding="utf-8")
+                                          "offset": offset, "count": 4, "book": isinstance(data, Path)}),
+                                     encoding="utf-8")
             try:
                 result = json.loads(await run_worker(WORKER, directory, (request.name,), timeout=timeout))
             except TimeoutError as exc:

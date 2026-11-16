@@ -33,8 +33,11 @@ source, target = (Path(value).resolve() for value in sys.argv[1:3])
 phase = sys.argv[3]
 if source == target or phase not in ("check", "install"):
     raise SystemExit("更新目录或阶段无效，未修改程序。")
-names = ("render.py", "render_worker.py", "render_service.py", "input_cache.py", "solver.py", "task_bot.py", "task_store.py", "search_tools.py", "settings.py", "pdf_tools.py", "ai.py", "qqmedia.py")
-new_modules = {"input_cache.py"}
+bot_modules = ("task_commands.py", "task_queue.py", "task_delivery.py", "book_library.py", "qq_panel.py")
+names = ("render.py", "render_worker.py", "render_service.py", "input_cache.py", "solver.py", "task_bot.py",
+         *bot_modules, "task_store.py", "search_tools.py", "settings.py", "pdf_tools.py", "ai.py",
+         "qqmedia.py", "file_tools.py", "message_input.py")
+new_modules = {"input_cache.py", *bot_modules}
 changes = []
 for name in names:
     incoming, installed = source / name, target / name
@@ -62,7 +65,7 @@ if phase == "check":
             shutil.copystat(installed, backup)
         except FileExistsError:
             pass
-    print("十二个程序文件语法检查通过；原文件备份已保留，不覆盖旧备份，新增模块可首次安装。")
+    print(f"{len(names)} 个程序文件语法检查通过；原文件备份已保留，不覆盖旧备份，新增模块可首次安装。")
     raise SystemExit(0)
 
 if any(previous is not None and not backup.is_file() for installed, data, previous, metadata, backup in changes):

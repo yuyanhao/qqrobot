@@ -9,6 +9,8 @@ import re
 import socket
 from dataclasses import dataclass
 from email.message import Message
+from io import BytesIO
+from typing import BinaryIO
 from urllib.parse import unquote, urljoin, urlparse
 
 import aiohttp
@@ -113,16 +115,22 @@ def _filename(disposition: str, url: str, content_type: str) -> str:
 
 async def download_file(
     url: str,
-    max_mb: int = 20,
-    timeout: int = 30,
+    max_mb: int | None = 20,
+    timeout: int | None = 30,
     allow_html: bool = False,
+    *,
+    output: BinaryIO | None = None,
 ) -> DownloadedFile:
+    """Return the downloaded bytes, or stream them to output and return empty data."""
     url = (url or "").strip()
     if not url:
         raise DownloadError("链接为空")
+    if max_mb is None and output is None:
+        raise ValueError("无大小上限的下载需要文件输出")
 
-    max_bytes = max(1, int(max_mb)) * 1024 * 1024
-    timeout_obj = aiohttp.ClientTimeout(total=max(5, int(timeout)))
+    max_bytes = max(1, int(max_mb)) * 1024**2 if max_mb is not None else None
+    timeout_obj = (aiohttp.ClientTimeout(total=max(5, int(timeout))) if timeout is not None
+                   else aiohttp.ClientTimeout(total=None, connect=30, sock_read=60))
     parsed_url = urlparse(url)
     headers = {
         "User-Agent": (
@@ -156,22 +164,25 @@ async def download_file(
                     raise DownloadError("这个链接是网页，不是可下载文件")
 
                 length_header = resp.headers.get("Content-Length")
-                if length_header:
+                if max_bytes is not None and length_header:
                     try:
                         if int(length_header) > max_bytes:
                             raise DownloadError(f"文件超过 {max_mb}MB")
                     except ValueError:
                         pass
 
-                chunks: list[bytes] = []
-                total = 0
-                async for chunk in resp.content.iter_chunked(64 * 1024):
-                    total += len(chunk)
-                    if total > max_bytes:
-                        raise DownloadError(f"文件超过 {max_mb}MB")
-                    chunks.append(chunk)
-
-                data = b"".join(chunks)
+                with BytesIO() as buffer:
+                    destination = output if output is not None else buffer
+                    total = 0
+                    try:
+                        async for chunk in resp.content.iter_chunked(64 * 1024):
+                            total += len(chunk)
+                            if max_bytes is not None and total > max_bytes:
+                                raise DownloadError(f"文件超过 {max_mb}MB")
+                            destination.write(chunk)
+                    except aiohttp.ClientPayloadError as exc:
+                        raise DownloadError("文件下载中断，请重试") from exc
+                    data = buffer.getvalue()
                 filename = _filename(
                     resp.headers.get("Content-Disposition", ""),
                     current,

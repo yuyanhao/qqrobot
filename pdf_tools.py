@@ -21,6 +21,7 @@ MAX_BATCH_PIXELS = 18_000_000
 MAX_SIDE_PIXELS = 3600
 MAX_PNG_BYTES = 4_500_000
 MAX_PDF_BYTES = 50 * 1024 * 1024
+MAX_INPUT_PDF_MB = 10
 _PAGE_CANDIDATE_RE = re.compile(r"(?<![\d.])(?:第\s*)?[+-]?\d[\d\s.第页+\-–—~～至到、,和及/]*页")
 _PAGE_NUMBER = r"(?:第\s*)?[+-]?\d+"
 _PAGE_RANGE = rf"{_PAGE_NUMBER}\s*(?:页\s*)?(?:[-–—~～至到]\s*{_PAGE_NUMBER}\s*(?:页\s*)?)?"
@@ -29,10 +30,47 @@ _PAGE_COUNT_RE = re.compile(r"(?:总共|一共|共有|合计|总计|共|总页�
 _CHINESE_PAGE_RE = re.compile(r"第\s*[零〇一二三四五六七八九十百千万两]+\s*页")
 _READ_SPEC_RE = re.compile(
     r"(?:只读|仅读|只看|仅看|读取|阅读)\s*(?P<spec>(?:第\s*)?[+-]?\d[\d\s.第页+\-–—~～至到、,和及/]*)")
+_LEADING_PAGE_RE = re.compile(
+    r"(?:(?:只读|仅读|只看|仅看)\s*)?(?:第\s*)?[+\-＋－]?\d[\d\s.．第页+\-＋－–—~～至到、,，和及/]*页")
 
 
 class PDFError(RuntimeError):
     """PDF 下载后无法打开/渲染。"""
+
+
+def pdf_page_count(path: Path):
+    with PDFIUM_LOCK:
+        try:
+            with pdfium.PdfDocument(path) as document:
+                pages = len(document)
+        except Exception as exc:
+            raise PDFError("PDF 打不开（可能加密或文件损坏）。") from exc
+    if not pages:
+        raise PDFError("PDF 没有页面。")
+    return pages
+
+
+def explicit_pdf_selection(text):
+    text = unicodedata.normalize("NFKC", text or "").strip()
+    spec = re.sub(r"^(?:只读|仅读|只看|仅看)\s*", "", text)
+    if spec.endswith("页") and _PAGE_SPEC_RE.fullmatch(spec):
+        return spec
+    if spec != text or _PAGE_CANDIDATE_RE.fullmatch(spec) or _CHINESE_PAGE_RE.fullmatch(spec):
+        raise PDFError("页码格式无效，请写“第3页”或“第3-5页”。")
+    return ""
+
+
+def split_pdf_selection(text):
+    """Read a leading page selection and keep the following draft verbatim."""
+    text = text.strip()
+    match = _LEADING_PAGE_RE.match(text)
+    if match:
+        selection = explicit_pdf_selection(match[0])
+        return selection, text[match.end():].lstrip(" \t\r\n　,，。:：")
+    if _CHINESE_PAGE_RE.match(text):
+        raise PDFError("请用阿拉伯数字指定页码，例如“第3页”或“第3-5页”")
+    selection = explicit_pdf_selection(text)
+    return selection, "" if selection else text
 
 
 def _select_pages(text: str, total: int, max_pages: int = 0) -> tuple[list[int], bool]:
@@ -138,18 +176,20 @@ def render_pdf(
 
 
 def render_pdf_batch(path: Path, text: str = "", max_pages: int = 0, dpi: int = 160,
-                     offset: int = 0, count: int = 4) -> tuple[list[bytes], int, list[int], bool, int]:
+                     offset: int = 0, count: int = 4, *, book=False) -> tuple[list[bytes], int, list[int], bool, int]:
     """Render at most four selected pages and report the full selection count."""
     if int(offset) < 0 or not 1 <= int(count) <= 4:
         raise PDFError("输入页码批次无效")
-    return _render_input_pdf(path, text, max_pages, dpi, int(offset), int(count))
+    return _render_input_pdf(path, text, max_pages, dpi, int(offset), int(count), book=book)
 
 
 def _render_input_pdf(source: bytes | Path, text: str, max_pages: int, dpi: int,
-                      offset: int = 0, count: int | None = None):
+                      offset: int = 0, count: int | None = None, *, book=False):
     size = source.stat().st_size if isinstance(source, Path) else len(source)
-    if not size or size > MAX_PDF_BYTES:
-        raise PDFError("PDF 为空或超过 50 MB")
+    if not size:
+        raise PDFError("PDF 为空")
+    if not book and size > MAX_INPUT_PDF_MB * 1024**2:
+        raise PDFError(f"PDF 超过 {MAX_INPUT_PDF_MB} MB")
     with PDFIUM_LOCK:
         try:
             document = pdfium.PdfDocument(str(source) if isinstance(source, Path) else source)
@@ -160,6 +200,8 @@ def _render_input_pdf(source: bytes | Path, text: str, max_pages: int, dpi: int,
             if total <= 0:
                 raise PDFError("PDF 没有页面")
             pages, selected = _select_pages(text, total, max_pages)
+            if book and not selected:
+                raise PDFError("引用书籍时请指定页码。")
             selection_count = len(pages)
             pages = pages[offset:] if count is None else pages[offset:offset + count]
             images = _render_pages(document, pages, max(100, min(int(dpi), 240)))

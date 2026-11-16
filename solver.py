@@ -11,8 +11,9 @@ import time
 
 from PIL import Image, ImageOps
 from ai import AIError, normalize_solution
+from book_library import BookLibrary
 from file_tools import DownloadError, download_file
-from input_cache import InputCacheError, read_cached_attachment
+from input_cache import InputCacheError, attachment_limit, read_cached_attachment
 from message_input import _is_pdf, _is_text_file, _decode_text
 from pdf_tools import PDFError
 from render import RenderError
@@ -21,6 +22,8 @@ from search_tools import deepseek_search
 import sympy_tools
 
 log = logging.getLogger("qq-math.solver")
+
+STUDY_ACTIONS = ("提示", "查错")
 
 
 class InputError(ValueError):
@@ -48,12 +51,32 @@ def normalize_image(data: bytes) -> bytes:
     return output
 
 
-def solution_text(doc):
-    lines = [doc["title"], "题目：", doc.get("problem_latex", "")]
+def solution_text(doc, *, include_problem=True):
+    lines = [doc["title"]]
+    if include_problem:
+        lines.extend(["题目：", doc.get("problem_latex", "")])
     for step in doc["steps"]:
         lines.extend([step["text"], step["math"]])
     lines.extend(["答案：", doc.get("answer_latex", ""), "检验：", doc.get("check_latex", "")])
     return "\n\n".join(x for x in lines if x)
+
+
+def study_problem(problem, request):
+    # Ordinary follow-ups keep the typed question in extra, outside the stored problem.
+    if problem and request.get("action") == "追问" and request.get("text"):
+        return problem + "\n\n本次追问：\n" + request["text"]
+    return problem
+
+
+def merge_question_ocr(inherited, current):
+    if not current:
+        return inherited
+    if not inherited or inherited.get("confirmed"):
+        return current
+    return {
+        "notes": list(dict.fromkeys(inherited["notes"] + current["notes"])),
+        "needs_confirmation": inherited["needs_confirmation"] or current["needs_confirmation"],
+    }
 
 
 class Solver:
@@ -70,7 +93,7 @@ class Solver:
         self.store.update(tid, result={"solution": draft, "answer_status": "uncertain",
                                       "verification": "尚未完成", "text_path": str(path), "input_notes": input_notes})
 
-    async def attachment_inputs(self, task, directory):
+    async def attachment_inputs(self, task, directory, *, draft=False):
         request = task["request"]
         blocks, images, input_notes, ocr_notes = [], [], [], []
         attachments = request.get("attachments", [])
@@ -78,32 +101,37 @@ class Solver:
         if len(attachments) > limit:
             raise InputError(f"本次最多 {limit} 个附件；多张题图请用 /收集 分批补图")
         image_total, picture_total, batches = 0, 0, 0
+        needs_confirmation = False
 
         async def transcribe_batch(label=None):
-            nonlocal batches
+            nonlocal batches, needs_confirmation
             if not images:
                 return
             batches += 1
-            recognized = await self.ai.transcribe(images, request.get("text", ""))
+            options = {"draft": True} if draft else {}
+            recognized = await self.ai.transcribe(images, request.get("text", ""), **options)
             label = label or f"图片/PDF 转写（第 {batches} 批）"
             blocks.append(label + "：\n" + recognized["problem_latex"])
             if sum(map(len, blocks)) > 24000:
                 raise InputError("读取的材料超过 24000 字符，尚未完成全文处理；请随 PDF 指定较少页码（如只读第3-5页），或按小问拆分")
             if recognized.get("notes"):
                 ocr_notes.append(recognized["notes"])
+            needs_confirmation |= not draft and recognized.get("needs_confirmation", False)
             images.clear()
 
         for index, item in enumerate(attachments):
-            cap = 20 if _is_pdf(item) else 2 if _is_text_file(item) else 8
             try:
-                data = read_cached_attachment(self.store, task, item)
+                if item.get("book_id"):
+                    data = BookLibrary(self.store.root).path(item["book_id"], include_removed=True)
+                else:
+                    data = read_cached_attachment(self.store, task, item)
                 if data is None:
                     url = item["url"]
                     if url.startswith("//"): url = "https:" + url
                     elif "://" not in url: url = "https://" + url
-                    file = await download_file(url, max_mb=cap, timeout=45)
+                    file = await download_file(url, max_mb=attachment_limit(item), timeout=45)
                     data = file.data
-            except InputCacheError as exc:
+            except (InputCacheError, ValueError) as exc:
                 raise InputError(str(exc)) from exc
             except DownloadError as exc:
                 raise InputError(f"附件下载失败：{exc}。请重新上传该附件。") from exc
@@ -112,11 +140,13 @@ class Solver:
                 numbers_read = []
                 try:
                     async with aclosing(render_input_pdf_batches_async(
-                            data, directory / f"input-{index}", request.get("text", ""))) as pdf_batches:
+                            data, directory / f"input-{index}",
+                            item.get("pdf_selection", request.get("text", "")))) as pdf_batches:
                         async for pages, total, numbers, selected in pdf_batches:
                             images.extend((page, "image/png") for page in pages)
                             image_total += len(pages)
-                            await transcribe_batch(f"PDF 附件 {index + 1}（共 {total} 页，第 {'、'.join(map(str, numbers))} 页）")
+                            origin = item.get("book_id") or f"PDF 附件 {index + 1}"
+                            await transcribe_batch(f"{origin}（共 {total} 页，第 {'、'.join(map(str, numbers))} 页）")
                             numbers_read.extend(numbers)
                     scope = "已读取全部页面" if not selected else "已读取指定页面"
                     input_notes.append(f"PDF 附件 {index + 1} 共 {total} 页，{scope}，本次读取第 {'、'.join(map(str, numbers_read))} 页")
@@ -128,7 +158,7 @@ class Solver:
                 await transcribe_batch()
                 text = _decode_text(data)
                 if len(text) > 20000: raise InputError("文本附件超过 2 万字符，请按题目拆分")
-                blocks.append("附件题目：\n" + text)
+                blocks.append(("附件草稿：\n" if draft else "附件题目：\n") + text)
             else:
                 if picture_total >= limit: raise InputError(f"本题最多识别 {limit} 张题目图片")
                 images.append((await asyncio.to_thread(normalize_image, data), "image/png"))
@@ -139,7 +169,20 @@ class Solver:
         await transcribe_batch()
         if image_total:
             input_notes.append(f"共识别 {image_total} 张图片/PDF 页面，分 {batches} 批转写")
-        return blocks, ocr_notes, input_notes
+        ocr = {"notes": ocr_notes, "needs_confirmation": needs_confirmation} if ocr_notes else {}
+        return blocks, ocr, input_notes
+
+    def record_question(self, task, problem, ocr):
+        tid = task["task_id"]
+        if ocr.get("needs_confirmation"):
+            action = task["request"].get("action")
+            ocr = {**ocr, "mode": action if action in STUDY_ACTIONS else "解题"}
+        self.store.update(tid, problem=problem, question_ocr=ocr)
+        self.store.update_favorite_question(task["request"].get("favorite_id") or tid, task["owner"],
+                                            study_problem(problem, task["request"]), ocr)
+        if ocr.get("needs_confirmation"):
+            raise InputError(f"识图有疑点，暂缓作答。发 /题干 {tid} 核对，"
+                             f"再发 /确认题干 {tid}（可在题号后写更正）继续。")
 
     async def inputs(self, task, directory):
         request = task["request"]
@@ -149,9 +192,11 @@ class Solver:
             parent = self.store.get(request["parent_id"], task["owner"])
             if not parent or parent["state"] == "expired" or not parent["problem"]:
                 raise InputError("原题已过期或还没有可复用的题干，请待原题识别完成后再补充")
-        materials, ocr_notes, input_notes = await self.attachment_inputs(task, directory)
-        if ocr_notes:
-            extra += "\n识图备注：" + "；".join(ocr_notes)
+        materials, current_ocr, input_notes = await self.attachment_inputs(task, directory)
+        inherited_ocr = parent.get("question_ocr", {}) if parent else request.get("question_ocr", {})
+        question_ocr = merge_question_ocr(inherited_ocr, current_ocr)
+        if question_ocr.get("notes") and not question_ocr.get("confirmed"):
+            extra += "\n识图备注：" + "；".join(question_ocr["notes"])
         if parent:
             blocks = [parent["problem"]]
             additions = [request.get("quoted", ""), *materials]
@@ -167,7 +212,81 @@ class Solver:
         problem = "\n\n".join(x for x in blocks if x).strip()
         if not problem: raise InputError("没有读到题目，请重新发送文字或清晰图片")
         if len(problem) > 24000: raise InputError("题目材料过长，请按小问拆分")
+        self.record_question(task, problem, question_ocr)
         return problem, extra, "；".join(input_notes)
+
+    async def run_study(self, task, directory):
+        tid, request = task["task_id"], task["request"]
+        action = request["action"]
+        checking = action == "查错"
+        problem = request.get("problem_snapshot", "")
+        question_ocr = request.get("question_ocr", {})
+        if checking and request.get("question_attachments"):
+            question = {**task, "request": {**request, "attachments": request["question_attachments"], "text": ""}}
+            blocks, question_ocr, _ = await self.attachment_inputs(question, directory)
+            problem = "\n\n".join(part for part in (problem, *blocks) if part)
+            self.record_question(task, problem, question_ocr)
+        blocks, current_ocr, _ = await self.attachment_inputs(task, directory, draft=checking)
+        supplied = "\n\n".join(part for part in (request.get("text"), request.get("quoted"), *blocks) if part).strip()
+        if not problem and not checking:
+            problem, supplied = supplied, ""
+            question_ocr = merge_question_ocr(question_ocr, current_ocr)
+            current_ocr = {}
+        elif not checking and request.get("supplement") and supplied:
+            problem += "\n\n用户补充或更正（以本段为准）：\n" + supplied
+            supplied = ""
+            question_ocr = merge_question_ocr(question_ocr, current_ocr)
+            current_ocr = {}
+        if not problem:
+            raise InputError("没有读到题干，请发送文字或清晰题图。")
+        if checking and not supplied:
+            raise InputError("没有读到草稿，请发送你的推导文字或清晰草稿图。")
+        if max(len(problem), len(supplied)) > 24000:
+            raise InputError("题干或草稿超过 2.4 万字符，请按小问拆分。")
+        self.record_question(task, problem, question_ocr)
+        if question_ocr.get("notes") and not question_ocr.get("confirmed"):
+            supplied += "\n\n题干识别备注：" + "；".join(question_ocr["notes"])
+        if current_ocr.get("notes"):
+            supplied += "\n\n附件识别备注：" + "；".join(current_ocr["notes"])
+        self.store.update(tid, state="solving")
+        response = await self.ai.study(action, problem, supplied, previous_hints=request.get("previous_hints", ()),
+                                       timeout=min(120, self.settings.solve_timeout))
+        status = response["status"]
+        if status == "rejected":
+            self.store.update(tid, state="rejected", error="仅提供数学物理题的提示和推导检查。")
+            return
+        feedback = response["feedback"]
+        if checking and self.settings.sympy and response["checks"]:
+            calculations = await sympy_tools.execute(response["checks"], workdir=directory)
+            calculations = [record for record in calculations if record["ok"]]
+            if calculations:
+                try:
+                    reconciled = await self.ai.reconcile_study_check(
+                        problem, supplied, feedback, calculations, timeout=min(30, self.settings.verify_timeout))
+                except AIError as exc:
+                    log.warning("study_reconciliation_failed task=%s code=%s", tid, exc.code)
+                    reconciled = None
+                if reconciled is None or reconciled["status"] == "uncertain":
+                    status = "uncertain"
+                    feedback = ("所查步骤暂无法确认。请核对下列计算的表达式、代入值、变量和适用条件"
+                                "是否与原题及草稿一致。")
+                else:
+                    status, feedback = reconciled["status"], reconciled["feedback"]
+                    calculations = [record for record in calculations if record["call_id"] in reconciled["used_checks"]]
+            lines = []
+            for record in calculations:
+                args = record["args"]
+                expr = args["expr"]
+                if record["tool"] == "diff":
+                    expr = f"d/d{args['symbol']} ({expr})"
+                value = str(record["result"])
+                lines.append(f"{expr} = {value[:120]}" + ("…" if len(value) > 120 else ""))
+            if lines:
+                feedback += "\n\n符号计算（仅核对以下算式）\n" + "\n".join(lines)
+        state = "needs_input" if status == "needs_clarification" else "completed"
+        self.store.update(tid, state=state, result={"study_text": feedback, "answer_status": status})
+        if state == "completed":
+            self.store.fill_favorite_answer(request.get("favorite_id") or tid, task["owner"], problem, feedback)
 
     async def search(self, query):
         if not self.settings.search or not self.settings.search_key:
@@ -192,8 +311,11 @@ class Solver:
         tid = task["task_id"]
         directory = self.store.task_dir(tid)
         self.store.update(tid, state="reading")
+        if task["request"].get("action") in STUDY_ACTIONS:
+            await self.run_study(task, directory)
+            return
         problem, extra, input_notes = await self.inputs(task, directory)
-        self.store.update(tid, problem=problem, state="planning")
+        self.store.update(tid, state="planning")
         plan = await self.ai.plan_problem(problem, extra)
         if not plan["accepted"]:
             self.store.update(tid, state="rejected", error="仅处理数学物理题、概念解释、证明检查及题目追问。")
@@ -265,6 +387,14 @@ class Solver:
             if result.get("plot_warnings"):
                 result["notes"] = "；".join(result["plot_warnings"])
         except (RenderError, TimeoutError) as exc:
-            result["notes"] = f"PDF 排版未完成，完整文字解答已保留，可发 /文字 {tid} 1 分段领取。"
+            result["notes"] = "PDF 排版未完成，解答已保存。"
             log.warning("render_failed task=%s type=%s", tid, type(exc).__name__)
-        self.store.update(tid, state="needs_input" if solution["status"] == "needs_clarification" else "completed", result=result)
+        state = "needs_input" if solution["status"] == "needs_clarification" else "completed"
+        self.store.update(tid, state=state, result=result)
+        if state == "completed":
+            favorite_id = task["request"].get("favorite_id") or tid
+            favorite = self.store.get_favorite(favorite_id, task["owner"])
+            effective_problem = study_problem(problem, task["request"])
+            if favorite and not favorite["answer"] and favorite["problem"] == effective_problem:
+                self.store.fill_favorite_answer(favorite_id, task["owner"], effective_problem,
+                                                solution_text(solution, include_problem=False))
