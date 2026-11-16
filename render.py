@@ -25,6 +25,20 @@ class RenderError(RuntimeError):
     """LaTeX 编译或 PDF 转图片失败。"""
 
 
+_GENERATED_PROBLEM_LABEL = re.compile(
+    r"(?m)^(?:图片/PDF 转写（第 \d+ 批）|"
+    r"(?:B\d{4,}|PDF 附件 \d+)（共 \d+ 页，第 [\d、]+ 页）|"
+    r"附件题目|本次补充/追问材料（结合原题重新核对）|"
+    r"用户补充或更正（以本段为准）|本次追问)：\r?\n"
+)
+
+
+def display_problem_text(text: str) -> str:
+    """Show the problem content without source labels added by the bot."""
+    text = _GENERATED_PROBLEM_LABEL.sub("", str(text or ""))
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
 def escape_text(text: str) -> str:
     text = re.sub(r"[\x00-\x08\x0b-\x1f\u2028\u2029]", " ", text or "")
     text = "".join(_SPECIAL.get(ch, ch) for ch in (text or ""))
@@ -402,7 +416,8 @@ def build_tex(doc: dict, *, plain=False, body_only=False) -> str:
     if not isinstance(steps, list):
         steps = []
 
-    total_len = len(str(doc.get("problem_latex") or "")) + len(str(doc.get("answer_latex") or ""))
+    total_len = len(display_problem_text(doc.get("problem_latex", "")))
+    total_len += len(str(doc.get("answer_latex") or ""))
     total_len += sum(
         len(str(step.get("text") or "")) + len(str(step.get("math") or ""))
         for step in steps
@@ -416,7 +431,9 @@ def build_tex(doc: dict, *, plain=False, body_only=False) -> str:
         value = str(doc.get(name) or "")
         return escape_text(value) if plain else render_field(value, display=display)
 
-    problem, answer, check = field("problem_latex", True), field("answer_latex"), field("check_latex")
+    problem_text = display_problem_text(doc.get("problem_latex", ""))
+    problem = escape_text(problem_text) if plain else render_field(problem_text, display=True)
+    answer, check = field("answer_latex"), field("check_latex")
     lines = ([r"\section*{" + escape_text(title) + "}"] if body_only
              else [_header(title, fontsize, margin, plain=plain)])
     lines.append(

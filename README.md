@@ -1,6 +1,6 @@
 # qqrobot
 
-当前版本：[v0.2.2](https://github.com/yuyanhao/qqrobot/releases/tag/v0.2.2)。变更内容见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：[v0.2.3](https://github.com/yuyanhao/qqrobot/releases/tag/v0.2.3)。变更内容见 [CHANGELOG.md](CHANGELOG.md)。
 
 `VERSION` 保存版本号；主分支更新此文件时，发布流程会创建对应 Git 标签和 GitHub Release。
 
@@ -96,7 +96,7 @@ docker compose logs --tail=100
 - 直接发数学或物理题的文字、图。群聊可 @ 机器人并附 PDF，私聊先发 PDF，再引用文件消息并写明要求。普通 PDF 每份最多 10 MB，可写「只读第3-5页」指定文件页码。多条提交材料先用「/收集」，再用「/补图 收集题号」追加，发「/开始 收集题号」解题。
 - 「/查错 题号」同条可附多张草稿图。也可引用原题，再发「/查错」并附上或写出过程。用普通 PDF 作题面时，可以在同条命令写「/查错 第3页 我先令 t=x」。
 - 直接发题号或「/结果 题号」查询并领取，排版后 1–3 页发全部图片，超过 3 页发 PDF。若只有文字稿，会发回第一段，再按提示用「/结果 题号 第2段」继续领取。用「/PDF 题号」可指定领取完整 PDF。
-- 「/书库」查看共享 PDF，「/引用 B0001 第3-5页」读取指定书页。管理员可在私聊用「/入库」附 PDF，或在云端终端导入。程序对管理员入库的 PDF 不设文件大小上限。下架后已登记的任务仍可读取需要的书页。
+- 「/书库」查看共享 PDF，编号按当前在库顺序连续排列；移除一本后，后续书籍编号自动顺延。「/引用 B0001 第3-5页」读取指定书页。管理员可在私聊用「/入库」附 PDF，或在云端终端导入。程序对管理员入库的 PDF 不设文件大小上限。已登记的任务仍会读取原来关联的书籍。
 - 「/收藏 题号」永久保存，解答完成后补入。「/复习」选题，「/复习 题号」领取题目和答案，「/错题本」导出本会话全部收藏。普通结果默认保留 7 天。
 - 手机 QQ 群的原生面板可用 python qq_panel.py 预览，部署后用 python qq_panel.py --apply 同步。「/最近」列出最近 3 个可点击的题号和提交时间。
 
@@ -166,10 +166,10 @@ python -m pytest -q
 cd /opt/qq-math-bot
 sudo tar -czf "/root/qq-math-bot-before-v0.2-$(date +%Y%m%d-%H%M%S).tar.gz" .env data
 cd /tmp
-curl -fL https://github.com/yuyanhao/qqrobot/archive/refs/tags/v0.2.2.tar.gz -o qqrobot-v0.2.2.tar.gz
-mkdir -p qqrobot-v0.2.2
-tar -xzf qqrobot-v0.2.2.tar.gz --strip-components=1 -C qqrobot-v0.2.2
-cd qqrobot-v0.2.2
+curl -fL https://github.com/yuyanhao/qqrobot/archive/refs/tags/v0.2.3.tar.gz -o qqrobot-v0.2.3.tar.gz
+mkdir -p qqrobot-v0.2.3
+tar -xzf qqrobot-v0.2.3.tar.gz --strip-components=1 -C qqrobot-v0.2.3
+cd qqrobot-v0.2.3
 sudo systemctl stop qqbot
 sudo bash setup.sh
 ```

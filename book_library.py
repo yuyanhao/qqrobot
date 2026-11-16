@@ -41,8 +41,12 @@ class BookLibrary:
         return db
 
     @staticmethod
-    def _entry(row):
-        return {**dict(row), "id": f"B{row['id']:04d}"}
+    def _entry(row, public_id=None):
+        entry = dict(row)
+        storage_id = f"B{entry['id']:04d}"
+        entry["id"] = public_id or storage_id
+        entry["_storage_id"] = storage_id
+        return entry
 
     @contextmanager
     def staged_pdf(self):
@@ -68,15 +72,19 @@ class BookLibrary:
                         (filename, title, summary, pages),
                     ).lastrowid
                     staged_pdf.replace(path)
+                    row = db.execute("SELECT * FROM books WHERE id=?", (number,)).fetchone()
+                    position = db.execute("SELECT COUNT(*) FROM books WHERE removed=0").fetchone()[0]
             except BaseException:
                 path.unlink(missing_ok=True)
                 raise
-            return self._entry(db.execute("SELECT * FROM books WHERE id=?", (number,)).fetchone())
+            return self._entry(row, public_id=f"B{position:04d}")
 
     def list(self, limit, offset=0):
         with closing(self._connect()) as db:
-            return [self._entry(row) for row in db.execute(
-                "SELECT * FROM books WHERE removed=0 ORDER BY id LIMIT ? OFFSET ?", (limit, offset))]
+            rows = db.execute(
+                "SELECT * FROM books WHERE removed=0 ORDER BY id LIMIT ? OFFSET ?", (limit, offset)).fetchall()
+            return [self._entry(row, public_id=f"B{offset + index:04d}")
+                    for index, row in enumerate(rows, 1)]
 
     def get(self, book_id, *, include_removed=False):
         if not re.fullmatch(BOOK_ID, book_id, flags=re.I) or len(book_id) > 18:
@@ -88,6 +96,19 @@ class BookLibrary:
             raise ValueError(f"书库里没有 {book_id.upper()}。")
         return self._entry(row)
 
+    def get_public(self, book_id):
+        if not re.fullmatch(BOOK_ID, book_id, flags=re.I) or len(book_id) > 18:
+            raise ValueError("书籍编号格式无效，例如 B0001。")
+        position = int(book_id[1:])
+        if position < 1:
+            raise ValueError(f"书库里没有 {book_id.upper()}。")
+        with closing(self._connect()) as db:
+            row = db.execute("SELECT * FROM books WHERE removed=0 ORDER BY id LIMIT 1 OFFSET ?",
+                             (position - 1,)).fetchone()
+        if row is None:
+            raise ValueError(f"书库里没有 {book_id.upper()}。")
+        return self._entry(row, public_id=f"B{position:04d}")
+
     def path(self, book_id, *, include_removed=False):
         path = self.directory / self.get(book_id, include_removed=include_removed)["filename"]
         if path.is_symlink() or path.resolve().parent != self.directory.resolve() or not path.is_file():
@@ -95,10 +116,10 @@ class BookLibrary:
         return path
 
     def remove(self, book_id):
-        book = self.get(book_id)
+        book = self.get_public(book_id)
         with closing(self._connect()) as db, db:
             changed = db.execute("UPDATE books SET removed=1 WHERE id=? AND removed=0",
-                                 (int(book["id"][1:]),)).rowcount
+                                 (int(book["_storage_id"][1:]),)).rowcount
             if not changed:
                 raise ValueError(f"书库里没有 {book_id.upper()}。")
         return book
@@ -122,11 +143,11 @@ class BookLibrary:
         if not match:
             raise ValueError("请填写书籍编号和物理页码，例如 B0001 第3-5页。")
         book_id, spec, tail = match.groups()
-        book = self.get(book_id)
+        book = self.get_public(book_id)
         _, selected = _select_pages(spec, book["pages"])
         if not selected:
             raise PDFError("引用书籍时请指定页码。")
-        return {"book_id": book["id"], "name": book["title"] + ".pdf",
+        return {"book_id": book["_storage_id"], "name": book["title"] + ".pdf",
                 "pdf_selection": spec}, (tail or "").strip()
 
 

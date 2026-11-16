@@ -427,7 +427,7 @@ class TaskCommands:
                 await self._submit(context, {"text": tail, "quoted": "", "attachments": [item, *attachments]})
                 return
             if action == "引用" and re.fullmatch(BOOK_ID, args, re.I):
-                book = library.get(args)
+                book = library.get_public(args)
                 await self._text(context, f"《{book['title']}》共 {book['pages']} 页。"
                                           f"请发送 /引用 {book['id']} 第3页 [解题要求]，页码从文件第一页数起。")
                 return

@@ -16,7 +16,7 @@ from file_tools import DownloadError, download_file
 from input_cache import InputCacheError, attachment_limit, read_cached_attachment
 from message_input import _is_pdf, _is_text_file, _decode_text
 from pdf_tools import PDFError
-from render import RenderError
+from render import RenderError, display_problem_text
 from render_service import render_artifacts_async, render_input_pdf_batches_async
 from search_tools import deepseek_search
 import sympy_tools
@@ -54,7 +54,7 @@ def normalize_image(data: bytes) -> bytes:
 def solution_text(doc, *, include_problem=True):
     lines = [doc["title"]]
     if include_problem:
-        lines.extend(["题目：", doc.get("problem_latex", "")])
+        lines.extend(["题目：", display_problem_text(doc.get("problem_latex", ""))])
     for step in doc["steps"]:
         lines.extend([step["text"], step["math"]])
     lines.extend(["答案：", doc.get("answer_latex", ""), "检验：", doc.get("check_latex", "")])
