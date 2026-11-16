@@ -61,6 +61,8 @@ async def sync_group_panel(media):
     for _ in range(20):
         page = await media._request(PANEL_PATH, method="GET", params=dict(params))
         records = page.get("records")
+        if records is None and page.get("is_end") is True and not page.get("next_cursor"):
+            records = []
         if not isinstance(records, list):
             raise PanelError("QQ 未返回有效的面板列表")
         for record in records:

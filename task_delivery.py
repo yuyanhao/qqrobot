@@ -60,7 +60,8 @@ class TaskDelivery:
                 await self._send(context, send_choices, text, choices)
                 return
             except QQMediaError as exc:
-                log.info("command_buttons_unavailable category=%s status=%s", exc.category, exc.status)
+                log.info("command_buttons_unavailable category=%s status=%s code=%s",
+                         exc.category, exc.status, exc.code)
         await self._text(context, text)
 
     async def _send_favorite_pdf(self, context, favorites, title):

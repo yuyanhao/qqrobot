@@ -189,7 +189,8 @@ class QQMedia:
             }]}
             for index, (label, command) in enumerate(choices, 1)
         ]
-        payload = {"msg_type": 0, "content": text, "keyboard": {"content": {"rows": rows}}}
+        payload = {"msg_type": 2, "markdown": {"content": text},
+                   "keyboard": {"content": {"rows": rows}}}
         await self._send_payload(kind, target, payload, msg_id, msg_seq)
 
     async def send_image(self, kind, target, file_info, msg_id=None, msg_seq=None):

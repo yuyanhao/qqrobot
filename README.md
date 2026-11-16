@@ -1,6 +1,6 @@
 # qqrobot
 
-当前版本：[v0.2](https://github.com/yuyanhao/qqrobot/releases/tag/v0.2)。变更内容见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：[v0.2.1](https://github.com/yuyanhao/qqrobot/releases/tag/v0.2.1)。变更内容见 [CHANGELOG.md](CHANGELOG.md)。
 
 `VERSION` 保存版本号；主分支更新此文件时，发布流程会创建对应 Git 标签和 GitHub Release。
 
@@ -166,10 +166,10 @@ python -m pytest -q
 cd /opt/qq-math-bot
 sudo tar -czf "/root/qq-math-bot-before-v0.2-$(date +%Y%m%d-%H%M%S).tar.gz" .env data
 cd /tmp
-curl -fL https://github.com/yuyanhao/qqrobot/archive/refs/tags/v0.2.tar.gz -o qqrobot-v0.2.tar.gz
-mkdir -p qqrobot-v0.2
-tar -xzf qqrobot-v0.2.tar.gz --strip-components=1 -C qqrobot-v0.2
-cd qqrobot-v0.2
+curl -fL https://github.com/yuyanhao/qqrobot/archive/refs/tags/v0.2.1.tar.gz -o qqrobot-v0.2.1.tar.gz
+mkdir -p qqrobot-v0.2.1
+tar -xzf qqrobot-v0.2.1.tar.gz --strip-components=1 -C qqrobot-v0.2.1
+cd qqrobot-v0.2.1
 sudo systemctl stop qqbot
 sudo bash setup.sh
 ```
