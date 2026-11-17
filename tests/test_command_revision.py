@@ -453,7 +453,7 @@ def test_admin_private_book_import_can_be_referenced_in_any_group(tmp_path, monk
 
     monkeypatch.setattr("task_commands.download_file", download)
 
-    async def transcribe(images, text):
+    async def transcribe(images, text, **options):
         assert len(images) == 1
         return {"problem_latex": "合成 PDF 题干"}
 
