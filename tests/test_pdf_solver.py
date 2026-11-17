@@ -30,7 +30,7 @@ class Recognizer:
         self.batches, self.user_texts = [], []
         self.fail_at, self.error, self.transcript_size = fail_at, error, transcript_size
 
-    async def transcribe(self, images, user_text):
+    async def transcribe(self, images, user_text, **options):
         numbers = []
         for data, mime in images:
             assert mime == "image/png"

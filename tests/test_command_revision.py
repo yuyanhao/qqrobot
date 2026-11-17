@@ -483,9 +483,9 @@ def test_admin_private_book_import_can_be_referenced_in_any_group(tmp_path, monk
             assert job["owner"] == chat.owner
             assert job["request"][field][0]["book_id"] == "B0001"
             jobs.append(job)
-        await bot._dispatch_command(chat, "/引用 B0001", "", [])
+        await bot._dispatch_command(chat, "/引用 B0001 解答一下", "", [])
         assert bot.queue.empty()
-        assert "明确指定页码" in bot.media.sent[-1][1]
+        assert "请填写书籍编号和物理页码" in bot.media.sent[-1][1]
         library = BookLibrary(tmp_path)
         saved_pdf = library.path("B0001")
         await bot._dispatch_command(other, "/移除书籍 B0001", "", [])
