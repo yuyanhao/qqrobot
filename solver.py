@@ -13,7 +13,7 @@ from book_library import BookLibrary
 from file_tools import DownloadError, download_file
 from input_cache import InputCacheError, attachment_limit, read_cached_attachment
 from message_input import _is_pdf, _is_text_file, _decode_text
-from pdf_tools import MAX_INPUT_PAGES, SECONDARY_INPUT_PAGES, PDFError
+from pdf_tools import MAX_INPUT_PAGES, PDFError, pdf_task_page_budget
 from render import RenderError, display_problem_text
 from render_service import render_artifacts_async, render_input_pdf_batches_async
 from search_tools import deepseek_search
@@ -128,8 +128,19 @@ class Solver:
         self.store.update(tid, result={"solution": draft, "answer_status": "uncertain",
                                       "verification": "尚未完成", "text_path": str(path), "input_notes": input_notes})
 
-    async def attachment_inputs(self, task, directory, *, draft=False, secondary_pdf=False):
+    @staticmethod
+    def _validate_pdf_page_budget(request):
+        pdfs = [item for item in [*(request.get("question_attachments") or []),
+                                  *(request.get("attachments") or [])]
+                if _is_pdf(item) or item.get("book_id")]
+        try:
+            return pdf_task_page_budget(pdfs, request.get("text") or "")
+        except PDFError as exc:
+            raise InputError(str(exc)) from exc
+
+    async def attachment_inputs(self, task, directory, *, draft=False, question_only=False):
         request = task["request"]
+        self._validate_pdf_page_budget(request)
         blocks, images, input_notes, ocr_notes = [], [], [], []
         attachments = request.get("attachments", [])
         limit = 12 if request.get("collected") else 4
@@ -165,7 +176,11 @@ class Solver:
             nonlocal needs_confirmation
             if not images:
                 return
-            options = {"draft": True} if draft else {}
+            options = {}
+            if draft:
+                options["draft"] = True
+            elif question_only:
+                options["question_only"] = True
             if question_target and not draft:
                 options["question_target"] = question_target
             label = label or f"图片/PDF 转写（第 {batches + 1} 批）"
@@ -201,12 +216,10 @@ class Solver:
             if _is_pdf(item):
                 await transcribe_batch()
                 numbers_read = []
-                auto_pages = SECONDARY_INPUT_PAGES if (draft or secondary_pdf) else 0
                 try:
                     async with aclosing(render_input_pdf_batches_async(
                             data, directory / f"input-{index}",
-                            item.get("pdf_selection", request.get("text", "")),
-                            auto_pages=auto_pages)) as pdf_batches:
+                            item.get("pdf_selection", request.get("text", "")))) as pdf_batches:
                         async for pages, total, numbers, selected in pdf_batches:
                             images.extend((page, "image/png") for page in pages)
                             image_total += len(pages)
@@ -215,12 +228,9 @@ class Solver:
                                 f"{origin}（共 {total} 页，第 {'、'.join(map(str, numbers))} 页）",
                                 question_target=item.get("question_target", ""))
                             numbers_read.extend(numbers)
-                    if selected:
-                        scope = "已读取指定页面"
-                    elif auto_pages:
-                        scope = f"已自动读取前 {min(total, auto_pages)} 页"
-                    else:
-                        scope = "已读取全部页面"
+                    if not selected:
+                        raise PDFError("必须明确指定要读取的页码。")
+                    scope = "已读取指定页面"
                     input_notes.append(f"PDF 附件 {index + 1} 共 {total} 页，{scope}，本次读取第 {'、'.join(map(str, numbers_read))} 页")
                 except AIError:
                     raise
@@ -259,16 +269,14 @@ class Solver:
 
     async def inputs(self, task, directory):
         request = task["request"]
+        self._validate_pdf_page_budget(request)
         extra = request.get("extra", "")
         parent = None
         if request.get("parent_id"):
             parent = self.store.get(request["parent_id"], task["owner"])
             if not parent or parent["state"] == "expired" or not parent["problem"]:
                 raise InputError("原题已过期或还没有可复用的题干，请待原题识别完成后再补充")
-        secondary_pdf = bool(request.get("parent_id") or request.get("retry_of")
-                             or request.get("collected") or request.get("secondary_pdf_auto"))
-        materials, current_ocr, input_notes = await self.attachment_inputs(
-            task, directory, secondary_pdf=secondary_pdf)
+        materials, current_ocr, input_notes = await self.attachment_inputs(task, directory)
         inherited_ocr = parent.get("question_ocr", {}) if parent else request.get("question_ocr", {})
         question_ocr = merge_question_ocr(inherited_ocr, current_ocr)
         if question_ocr.get("notes") and not question_ocr.get("confirmed"):
@@ -294,16 +302,23 @@ class Solver:
 
     async def run_study(self, task, directory):
         tid, request = task["task_id"], task["request"]
+        self._validate_pdf_page_budget(request)
         action = request["action"]
         checking = action == "查错"
         problem = request.get("problem_snapshot", "")
         question_ocr = request.get("question_ocr", {})
         if checking and request.get("question_attachments"):
             question = {**task, "request": {**request, "attachments": request["question_attachments"], "text": ""}}
-            blocks, question_ocr, _ = await self.attachment_inputs(question, directory)
+            blocks, question_ocr, _ = await self.attachment_inputs(
+                question, directory, question_only=bool(request.get("check_question_as_draft")))
             problem = "\n\n".join(part for part in (problem, *blocks) if part)
             self.record_question(task, problem, question_ocr)
-        blocks, current_ocr, _ = await self.attachment_inputs(task, directory, draft=checking)
+        draft_task = task
+        if checking and request.get("check_question_as_draft"):
+            draft_attachments = [*(request.get("question_attachments") or []),
+                                *(request.get("attachments") or [])]
+            draft_task = {**task, "request": {**request, "attachments": draft_attachments}}
+        blocks, current_ocr, _ = await self.attachment_inputs(draft_task, directory, draft=checking)
         supplied = "\n\n".join(part for part in (request.get("text"), request.get("quoted"), *blocks) if part).strip()
         if not problem and not checking:
             problem, supplied = supplied, ""

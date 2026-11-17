@@ -2,12 +2,11 @@
 
 ## 代码与版本
 
-- [x] P0/P1 修复与回归覆盖已提交；本机 `python -m pytest -q` 通过（当前 418 passed / 2 skipped）。
-- [x] 已推送到 `origin/codex/prepare-v0.3.0`；[GitHub Actions run 44031595227](https://github.com/yuyanhao/qqrobot/actions/runs/44031595227) 成功，Python 3.12、3.14 两个矩阵均通过。
+- [ ] 每份待读取 PDF 均须明确选页，单份和单任务合计最多 5 页；本地新改动推送后须等 GitHub Actions 对最新提交完成验证。
 - [x] `LICENSE`（MIT，yuyanhao）、安全政策、贡献说明和用户文档已核对。
-- [x] 复核本版本 `CHANGELOG.md` 顶部段落；`VERSION`、README 发布链接及 Docker/更新命令一致。
+- [ ] 当前准备分支使用 `VERSION=0.3.0`；云端验收和代码收尾后，再统一准备 v1.0.0 的正式版本号、变更记录与升级命令。
 - [x] `python tools/check_release.py`、`ruff check .`、`python settings.py --allow-missing-credentials` 通过；发布工作流只提取当前版本说明。
-- [x] 核对 `PDF_INPUT_MAX_PAGES` / `PDF_TASK_MAX_PAGES` 与 `BOOK_MAX_PDF_MB` / `BOOK_LIBRARY_MAX_MB` 的默认值或部署覆盖值。
+- [x] 确认 `PDF_INPUT_MAX_PAGES` / `PDF_TASK_MAX_PAGES` 默认值均为 5、配置不能超过 5；核对书库配额及部署覆盖值。
 - [x] 代码审查通过；无真实密钥、测试用户数据或生成目录进入提交。
 
 ## 仓库设置
@@ -21,7 +20,7 @@
 
 ## 发布与验收
 
-- [ ] 合并到 `main` 前确认发布工作流的 VERSION 变更会创建 **v1.0.0** 标签；不要提前推送未经验收的版本。
+- [ ] 在 v1.0.0 代码和云端验收完成前，不合并、不创建正式标签或 Release；最终提交前再确认发布门禁。
 - [ ] 检查 GitHub Release 只包含当前版本的说明且标记为 Latest。
 - [ ] 在干净 Ubuntu 环境验证安装、配置、服务启停与日志。
 - [ ] 从 v0.2.6 数据副本升级，确认任务、收藏、附件和书库可读。

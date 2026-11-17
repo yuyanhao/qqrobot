@@ -87,8 +87,8 @@ def validate_environment(*, require_credentials=True):
     for name in ("SOLVE_MAX_TOKENS", "VERIFY_MAX_TOKENS"):
         if name in os.environ:
             number(name, 131072 if effort == "max" else 65536, 8192, 131072)
-    number("PDF_INPUT_MAX_PAGES", 10, 1, 50)
-    number("PDF_TASK_MAX_PAGES", 20, 1, 200)
+    number("PDF_INPUT_MAX_PAGES", 5, 1, 5)
+    number("PDF_TASK_MAX_PAGES", 5, 1, 5)
     number("BOOK_MAX_PDF_MB", 100, 1, 2048)
     number("BOOK_LIBRARY_MAX_MB", 1024, 1, 10240)
     model = os.getenv("DEEPSEEK_MODEL", "deepseek-flash").strip()

@@ -6,7 +6,8 @@ import json
 from PIL import Image
 import pytest
 
-from pdf_tools import PDFError, _select_pages, pdf_pages_from_text, render_pdf
+from pdf_tools import (PDFError, _select_pages, pdf_pages_from_text,
+                       pdf_task_page_budget, render_pdf)
 from render_service import render_input_pdf_batches_async
 
 
@@ -25,7 +26,7 @@ def colored_pdf(count=17):
     ("读取第3页", [3], True),
     ("第3-5页", [3, 4, 5], True),
     ("第3页到第5页", [3, 4, 5], True),
-    ("第1-6页", [1, 2, 3, 4, 5, 6], True),
+    ("第1-5页", [1, 2, 3, 4, 5], True),
     ("第2、5、8-10页", [2, 5, 8, 9, 10], True),
     ("只读2-5页", [2, 3, 4, 5], True),
     ("第10至8页", [8, 9, 10], True),
@@ -42,7 +43,7 @@ def test_page_selection_uses_the_complete_explicit_selection_within_limit(text, 
 
 @pytest.mark.parametrize("text", ["", "求第3题，给出2种方法", "第0页", "第-1页", "第2、99页", "第19-21页", "第1000000000页",
                                      "第1.5页", "第2、、5页", "第2/5页", "第2--5页",
-                                     "读取第3题", "只读第三页", "只读第3-5", "只读第3页和7", "第1-11页",
+                                     "读取第3题", "只读第三页", "只读第3-5", "只读第3页和7", "第1-6页", "第1-11页",
                                      "第1、2、3、4、5、6、7、8、9、10、11页"])
 def test_invalid_page_selection_never_falls_back_to_all_or_a_partial_selection(text):
     with pytest.raises(PDFError):
@@ -52,14 +53,28 @@ def test_invalid_page_selection_never_falls_back_to_all_or_a_partial_selection(t
 def test_pdf_pages_from_text_finds_page_numbers_anywhere():
     assert pdf_pages_from_text("请解答第3-5页，共10页") == {3, 4, 5}
     assert pdf_pages_from_text("第3题不需要页码") == set()
+    with pytest.raises(PDFError, match="最多读取 5 页"):
+        pdf_pages_from_text("第1-6页")
     with pytest.raises(PDFError, match="最多读取"):
         pdf_pages_from_text("第1-11页")
 
 
-def test_automatic_selection_reads_only_the_first_pages():
-    assert _select_pages("", 20, auto_pages=5) == ([1, 2, 3, 4, 5], False)
-    assert _select_pages("", 3, auto_pages=5) == ([1, 2, 3], False)
-    assert _select_pages("", 20, max_pages=4, auto_pages=5) == ([1, 2, 3, 4], False)
+def test_task_pdf_page_budget_requires_selection_and_caps_the_aggregate():
+    selected = [
+        {"pdf_selection": "第1-3页"},
+        {"pdf_selection": "第4-5页"},
+    ]
+    assert pdf_task_page_budget(selected) == 5
+    with pytest.raises(PDFError, match="超过上限 5 页"):
+        pdf_task_page_budget([*selected, {"pdf_selection": "第6页"}])
+    with pytest.raises(PDFError, match="明确指定页码"):
+        pdf_task_page_budget([{"pdf_selection": ""}])
+    assert pdf_task_page_budget([{}], text="第3页 解释一下") == 1
+
+
+def test_automatic_selection_is_rejected_even_when_requested():
+    with pytest.raises(PDFError, match="必须明确指定"):
+        _select_pages("", 20, auto_pages=5)
 
 
 def test_caller_cap_can_only_reduce_the_shared_page_limit():
@@ -98,15 +113,12 @@ def test_real_pdf_batches_read_only_explicit_selection_in_order_and_cleanup(tmp_
     asyncio.run(check())
 
 
-def test_real_pdf_batches_can_auto_read_the_first_pages(tmp_path):
+def test_real_pdf_batches_reject_automatic_page_selection(tmp_path):
     async def check():
-        data = colored_pdf()
-        observed = []
-        async with aclosing(render_input_pdf_batches_async(data, tmp_path, "", auto_pages=5)) as batches:
-            async for images, total, numbers, selected in batches:
-                assert total == 17 and not selected
-                observed.extend(numbers)
-        assert observed == [1, 2, 3, 4, 5]
+        with pytest.raises(PDFError, match="必须明确指定"):
+            async with aclosing(render_input_pdf_batches_async(
+                    colored_pdf(), tmp_path, "", auto_pages=5)) as batches:
+                await anext(batches)
     asyncio.run(check())
 
 

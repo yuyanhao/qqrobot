@@ -32,9 +32,8 @@ def _env_page_limit(name, default, low, high):
 
 # Per-PDF and whole-task budgets. The worker process is launched with
 # PDF_INPUT_MAX_PAGES passed through, so both sides enforce the same limit.
-MAX_INPUT_PAGES = _env_page_limit("PDF_INPUT_MAX_PAGES", 10, 1, 50)
-MAX_TASK_INPUT_PAGES = _env_page_limit("PDF_TASK_MAX_PAGES", 20, 1, 200)
-SECONDARY_INPUT_PAGES = min(5, MAX_INPUT_PAGES)
+MAX_INPUT_PAGES = _env_page_limit("PDF_INPUT_MAX_PAGES", 5, 1, 5)
+MAX_TASK_INPUT_PAGES = _env_page_limit("PDF_TASK_MAX_PAGES", 5, 1, 5)
 _PAGE_CANDIDATE_RE = re.compile(r"(?<![\d.])(?:第\s*)?[+-]?\d[\d\s.第页+\-–—~～至到、,和及/]*页")
 _PAGE_NUMBER = r"(?:第\s*)?[+-]?\d+"
 _PAGE_RANGE = rf"{_PAGE_NUMBER}\s*(?:页\s*)?(?:[-–—~～至到]\s*{_PAGE_NUMBER}\s*(?:页\s*)?)?"
@@ -114,6 +113,40 @@ def pdf_selection_page_count(spec):
     return _validate_selection_page_count(spec)
 
 
+def pdf_task_page_budget(pdf_items, text=""):
+    """Validate explicit selections and the aggregate page budget for a task."""
+    pdf_items = list(pdf_items)
+    if not pdf_items:
+        return 0
+    fallback_pages = pdf_pages_from_text(text or "")
+    source_pages = {}
+    for index, item in enumerate(pdf_items):
+        selection = item.get("pdf_selection") or ""
+        pages = _selection_pages(selection) if selection else set(fallback_pages)
+        if not pages:
+            raise PDFError(
+                f"每份要读取的 PDF 都必须明确指定页码；每份 PDF 和每个任务最多读取 "
+                f"{MAX_INPUT_PAGES} 页。")
+        if item.get("book_id"):
+            source = ("book", item["book_id"])
+        elif item.get("url"):
+            source = ("url", item["url"])
+        elif item.get("cached_name"):
+            source = ("cache", item["cached_name"])
+        else:
+            source = ("item", index)
+        source_pages.setdefault(source, set()).update(pages)
+    total = sum(len(pages) for pages in source_pages.values())
+    if total > MAX_TASK_INPUT_PAGES:
+        raise PDFError(
+            f"本任务 PDF 页码合计 {total} 页，超过上限 {MAX_TASK_INPUT_PAGES} 页；"
+            "请分题提交或减少页码。")
+    for pages in source_pages.values():
+        if len(pages) > MAX_INPUT_PAGES:
+            raise PDFError(f"单份 PDF 每次最多读取 {MAX_INPUT_PAGES} 页，请分段指定页码。")
+    return total
+
+
 def pdf_pages_from_text(text):
     """Return page numbers mentioned anywhere in a message, without a PDF page count."""
     text = unicodedata.normalize("NFKC", text or "")
@@ -152,7 +185,11 @@ def split_pdf_selection(text):
 
 def _select_pages(text: str, total: int, max_pages: int = 0,
                   auto_pages: int = 0) -> tuple[list[int], bool]:
-    """Select physical PDF pages; explicit selections win over automatic mode."""
+    """Select only explicitly requested physical PDF pages.
+
+    ``auto_pages`` remains accepted for old worker requests but never enables
+    automatic reads.
+    """
     requested: set[int] = set()
     text = unicodedata.normalize("NFKC", text or "")
     if _CHINESE_PAGE_RE.search(text):
@@ -187,12 +224,9 @@ def _select_pages(text: str, total: int, max_pages: int = 0,
             if len(requested) > MAX_INPUT_PAGES:
                 raise PDFError(f"单份 PDF 每次最多读取 {MAX_INPUT_PAGES} 页，请分段指定页码。")
     if not selected:
-        if int(auto_pages or 0) > 0:
-            count = min(total, int(auto_pages), MAX_INPUT_PAGES)
-            if int(max_pages) > 0:
-                count = min(count, int(max_pages))
-            return list(range(1, count + 1)), False
-        raise PDFError(f"PDF 共 {total} 页，必须明确指定要读取的页码；每份 PDF 每次最多读取 {MAX_INPUT_PAGES} 页。示例：“第3页”或“第3-5页”。")
+        raise PDFError(
+            f"PDF 共 {total} 页，必须明确指定要读取的页码；每份 PDF 和每个任务最多读取 "
+            f"{MAX_INPUT_PAGES} 页。示例：“第3页”或“第3-5页”。")
     pages = sorted(requested)
     limit = min(MAX_INPUT_PAGES, int(max_pages)) if int(max_pages) > 0 else MAX_INPUT_PAGES
     if len(pages) > limit:

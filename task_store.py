@@ -323,7 +323,7 @@ class TaskStore:
                             (json.dumps(updated, ensure_ascii=False), time.time(), task["task_id"], owner))
         return self.get(task_id, owner), added
 
-    def start_collection(self, task_id, owner, *, max_active=5, max_user_active=2):
+    def start_collection(self, task_id, owner, *, max_active=5, max_user_active=2, request=None):
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
             task = self.get(task_id, owner)
@@ -333,12 +333,25 @@ class TaskStore:
                 raise ValueError("该题已开始或不在收集状态，请按题号查询进度")
             if task["error"].startswith("首批附件未保存"):
                 raise ValueError(f"{task['error']} 请用 /补图 {task['task_id']} 重新发送附件。")
-            request = self._collection_materials(task["request"])
-            if not (request["text"].strip() or request["quoted"].strip() or request["attachments"]):
+            request = self._collection_materials(request if request is not None else task["request"])
+            if not (request["text"].strip() or request["quoted"].strip() or request["attachments"]
+                    or request.get("question_attachments")):
                 raise ValueError("尚未收到题目材料，请先补图或补充文字")
             self._check_active_limits(owner, max_active, max_user_active)
-            self.db.execute("UPDATE tasks SET state='queued',updated=?,error='',delivery='pending' WHERE task_id=? AND owner=?",
-                            (time.time(), task["task_id"], owner))
+            self.db.execute("""UPDATE tasks SET state='queued',request=?,updated=?,error='',delivery='pending'
+                WHERE task_id=? AND owner=?""",
+                            (json.dumps(request, ensure_ascii=False), time.time(), task["task_id"], owner))
+        return self.get(task_id, owner)
+
+    def update_collection_request(self, task_id, owner, request):
+        with self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            task = self.get(task_id, owner)
+            if task is None or task["state"] != "collecting":
+                raise ValueError("题目已不在材料收集状态")
+            request = self._collection_materials(request)
+            self.db.execute("UPDATE tasks SET request=?,updated=? WHERE task_id=? AND owner=?",
+                            (json.dumps(request, ensure_ascii=False), time.time(), task_id, owner))
         return self.get(task_id, owner)
 
     def update(self, task_id, **fields):
@@ -451,10 +464,23 @@ def describe(task):
     if task["state"] == "completed" and result.get("study_text"):
         lines[0] = f"{task['task_id']}｜已生成{task['request']['action']}反馈"
     if task["state"] == "collecting":
-        count = len(task["request"].get("attachments") or [])
-        lines.append(f"已收集 {count} 个附件，最多 12 个；尚未开始解题。")
-        lines.append(f"/补图 {task['task_id']}（同条消息附图片）")
-        lines.append(f"/开始 {task['task_id']}（收齐材料后解题）")
+        if task["request"].get("check_flow"):
+            request = task["request"]
+            count = len(request.get("attachments") or [])
+            stage = request.get("check_stage")
+            if stage == "question":
+                lines.append("请下一条单独发送题目图片或 PDF。")
+            elif stage == "draft":
+                question_count = request.get("check_question_attachment_count", 0)
+                lines.append(f"已收到草稿 {max(0, count - question_count)} 份；可继续单独发送草稿图。")
+            elif stage == "ready":
+                lines.append("题目和作答已在同页，材料已经齐备。")
+            lines.append(f"材料齐备后发送 /开始 {task['task_id']}。")
+        else:
+            count = len(task["request"].get("attachments") or [])
+            lines.append(f"已收集 {count} 个附件，最多 12 个；尚未开始解题。")
+            lines.append(f"/补图 {task['task_id']}（同条消息附图片）")
+            lines.append(f"/开始 {task['task_id']}（收齐材料后解题）")
     if result.get("answer_status") == "uncertain": lines.append("结论：仍有疑点，不能视为已解决")
     if result.get("verification"): lines.append("复核：" + result["verification"])
     if result.get("total_pages"): lines.append(f"完整 PDF：{result['total_pages']} 页")

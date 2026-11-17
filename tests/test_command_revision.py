@@ -146,6 +146,12 @@ def test_pdf_page_budget_is_checked_before_registration(tmp_path):
         asyncio.run(bot._submit(context(), {
             "text": "解释一下", "parent_id": "Q261116-000001",
             "attachments": [pdfs[0]]}))
+        assert bot.queue.empty()
+        assert any("明确指定页码" in item[1] for item in bot.media.sent if item[0] == "text")
+
+        asyncio.run(bot._submit(context(), {
+            "text": "第2-3页 解释一下", "parent_id": "Q261116-000001",
+            "attachments": [pdfs[0]]}))
         assert bot.queue.qsize() == 1
         task = bot.store.get(bot.queue.get_nowait())
         assert task["request"]["attachments"] == [pdfs[0]]
@@ -153,15 +159,25 @@ def test_pdf_page_budget_is_checked_before_registration(tmp_path):
         bot.store.close()
 
 
-def test_secondary_pdf_estimate_and_budget():
+def test_secondary_pdf_selection_is_required_and_total_budget_is_five():
     from task_queue import TaskQueue
+    from pdf_tools import PDFError
 
-    book = {"book_id": "B0001", "name": "book.pdf", "pdf_selection": "第3-5页"}
+    book = {"book_id": "B0001", "name": "book.pdf", "pdf_selection": "第1-3页"}
     draft = {"url": "https://example.com/draft.pdf", "name": "draft.pdf"}
-    assert TaskQueue._pdf_page_budget({
-        "secondary_pdf_auto": True, "attachments": [book, draft]}) == 8
-    assert TaskQueue._estimated_ocr_batches({"parent_id": "Q261116-000001",
-                                             "attachments": [draft]}) == 2
+    with pytest.raises(PDFError, match="明确指定页码"):
+        TaskQueue._pdf_page_budget({"parent_id": "Q261116-000001", "attachments": [book, draft]})
+
+    selected_draft = {**draft, "pdf_selection": "第4-6页"}
+    with pytest.raises(PDFError, match="超过上限 5 页"):
+        TaskQueue._pdf_page_budget({"parent_id": "Q261116-000001",
+                                    "attachments": [book, selected_draft]})
+
+    one_book_page = {**book, "pdf_selection": "第1页"}
+    two_draft_pages = {**draft, "pdf_selection": "第4-5页"}
+    request = {"parent_id": "Q261116-000001", "attachments": [one_book_page, two_draft_pages]}
+    assert TaskQueue._pdf_page_budget(request) == 3
+    assert TaskQueue._estimated_ocr_batches(request) == 2
 
 
 def test_ambiguous_book_attachment_detection(tmp_path):
@@ -189,15 +205,27 @@ def test_admin_image_is_not_swallowed_by_book_staging(tmp_path):
         bot.store.close()
 
 
-def test_check_draft_pdf_uses_automatic_first_pages(tmp_path):
+def test_check_draft_pdf_requires_an_explicit_page_selection(tmp_path):
     bot = make_bot(tmp_path)
     question = {"url": "https://example.com/question.png", "name": "question.png"}
     draft = {"url": "https://example.com/draft.pdf", "name": "draft.pdf"}
     try:
-        asyncio.run(bot._dispatch_command(context(), "/查错", "", [question, draft]))
-        task = bot.store.get(bot.queue.get_nowait())
-        assert task["request"]["question_attachments"] == [question]
-        assert task["request"]["attachments"] == [draft]
+        asyncio.run(bot._dispatch_command(context(), "/查错 我令 t=x", "", [question, draft]))
+        assert bot.queue.empty()
+        assert any("明确指定页码" in item[1] for item in bot.media.sent if item[0] == "text")
+    finally:
+        bot.store.close()
+
+
+def test_check_rejects_quoted_question_pdf_without_page_selection(tmp_path):
+    bot = make_bot(tmp_path)
+    question = {"url": "https://example.com/question.pdf", "name": "question.pdf"}
+    try:
+        asyncio.run(bot._dispatch_command(
+            context(), "/查错 我令 t=x", "引用题面", [question],
+            quoted_urls={question["url"]}))
+        assert bot.queue.empty()
+        assert any("明确指定页码" in item[1] for item in bot.media.sent if item[0] == "text")
     finally:
         bot.store.close()
 
@@ -228,6 +256,22 @@ def test_check_keeps_pdf_page_selection_separate_from_draft(tmp_path, selection,
         request = bot.store.get(bot.queue.get_nowait())["request"]
         assert request["question_attachments"] == [{**attachment, "pdf_selection": "第3页"}]
         assert request["text"] == draft and not request["attachments"]
+    finally:
+        bot.store.close()
+
+
+def test_check_applies_pages_to_quoted_question_pdf_and_attached_draft_pdf(tmp_path):
+    bot = make_bot(tmp_path)
+    question = {"url": "https://example.com/question.pdf", "name": "question.pdf"}
+    draft = {"url": "https://example.com/draft.pdf", "name": "draft.pdf"}
+    try:
+        asyncio.run(bot._dispatch_command(
+            context(), "/查错 第3页 我令 t=x", "引用题面", [question, draft],
+            quoted_urls={question["url"]}))
+        task = bot.store.get(bot.queue.get_nowait())
+        assert task["request"]["question_attachments"] == [{**question, "pdf_selection": "第3页"}]
+        assert task["request"]["attachments"] == [{**draft, "pdf_selection": "第3页"}]
+        assert task["request"]["text"] == "我令 t=x"
     finally:
         bot.store.close()
 
@@ -439,6 +483,9 @@ def test_admin_private_book_import_can_be_referenced_in_any_group(tmp_path, monk
             assert job["owner"] == chat.owner
             assert job["request"][field][0]["book_id"] == "B0001"
             jobs.append(job)
+        await bot._dispatch_command(chat, "/引用 B0001 解答一下", "", [])
+        assert bot.queue.empty()
+        assert "请填写书籍编号和物理页码" in bot.media.sent[-1][1]
         library = BookLibrary(tmp_path)
         saved_pdf = library.path("B0001")
         await bot._dispatch_command(other, "/移除书籍 B0001", "", [])

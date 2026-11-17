@@ -19,7 +19,7 @@ from book_library import (BOOK_ID, BOOK_UPLOAD_DISK_RESERVE_MB, MAX_BOOK_LIBRARY
 from file_tools import DownloadError, download_file
 from message_input import _is_pdf
 from pdf_tools import (MAX_INPUT_PAGES, MAX_INPUT_PDF_MB, PDFError,
-                       SECONDARY_INPUT_PAGES, split_pdf_selection)
+                       pdf_pages_from_text, split_pdf_selection)
 from solver import solution_text, study_problem
 from task_store import ACTIVE, STATES, TASK_RE, confirmation_key, describe
 
@@ -48,8 +48,8 @@ PICKER_STATES = {
 
 HELP = ("直接发送数学物理题的文字或图片即可获得题号。\n"
         f"普通 PDF 每份最多 {MAX_INPUT_PDF_MB} MB。群聊可附 PDF 直接发题，私聊请引用 PDF 并写明要求。\n"
-        f"可写“只读第3-5页”或“第2、5、8-10页”指定页码（从 1 开始）；每份 PDF 每次必须指定 1–{MAX_INPUT_PAGES} 页。\n"
-        f"草稿、补充/追问等非题目 PDF 未写页码时，自动读取前 {SECONDARY_INPUT_PAGES} 页。\n"
+        f"所有要识读的 PDF 都必须明确写页码；每份 PDF 和每个任务最多读取 {MAX_INPUT_PAGES} 页。\n"
+        "未写页码、页数超限或页码格式错误时不会读取 PDF。\n"
         "完成后：1–3 页发全部图片，超过 3 页发完整 PDF。\n"
         "群聊每条操作都需 @ 机器人；请用提交原题的账号在原会话操作。\n\n"
         "题号 或 /结果 题号：查询状态，完成后领取结果；无 PDF 时可分段领取文字稿\n"
@@ -57,9 +57,11 @@ HELP = ("直接发送数学物理题的文字或图片即可获得题号。\n"
         "/进度 题号：只看进度和复核状态\n"
         "/图片 题号 1：从第 1 页取最多两页图片\n"
         "/追问 题号 具体问题：关联原题继续提问\n"
-        "/查错 题号 [草稿]：检查推导的正确性和完整性，同条可附多张草稿图\n"
-        "无题号时可发 /查错 并按顺序附题目图、草稿图；题目是 PDF 时可写 /查错 第3页\n"
-        "也可引用原题消息，再发 /查错 并附上或写出你的推导\n"
+        "/查错：开始分步提交，先单独发题目图，再单独发草稿图，最后 /开始 查错号\n"
+        "/查错 最近：选择一条已保存题目继续查错\n"
+        "/查错 题号：关联已保存题目，之后单独发草稿图；多张可逐张发，最后 /开始 查错号\n"
+        "/查错 同页 第3页：题目和作答在同一页时先设此模式，再单独发送图片/PDF\n"
+        "PDF 页码须先用 /查错 第3页 或 /查错 查错号 第3页 指定，再单独发送 PDF\n"
         "/查错 B0001 第3页：用书库 PDF 作题目，同条附草稿图或在页码后写过程\n"
         "/题干 题号 [段号]：查看转写和识图疑点；/确认题干 题号 [更正]：确认后继续\n"
         "/收藏 题号 [错因]：保存题目，解答完成后自动补入；/收藏 查看列表\n"
@@ -211,9 +213,12 @@ class TaskCommands:
             await self._offer_question_choices(context, action)
             return
         if (context.kind == "group" and not args and not quoted and not attachments
-                and action in QUESTION_ID_COMMANDS):
+                and action in QUESTION_ID_COMMANDS and action != "查错"):
             if await self._offer_question_choices(context, action):
                 return
+        if command == "查错" and args.casefold() == "最近":
+            await self._offer_question_choices(context, "查错")
+            return
         if command == "查错":
             await self._check_command(context, args, quoted, attachments, quoted_urls)
             return
@@ -277,6 +282,8 @@ class TaskCommands:
         if not candidates:
             if action == "最近":
                 await self._text(context, "你在本会话还没有近期题目。")
+            elif action == "查错":
+                await self._text(context, "没有可继续查错的已保存题目；发 /查错 后单独发送题目图即可开始。")
             return False
 
         lines = (["最近题目。点题号填入输入框。"] if action == "最近"
@@ -436,6 +443,9 @@ class TaskCommands:
             if await self._show_confirmed_question(context, tid):
                 return
             source = self.store.get(tid, context.owner)
+            if source and source["state"] == "collecting" and source["request"].get("check_flow"):
+                await self._configure_check_flow(context, source, tail, attachments)
+                return
             favorite = self.store.get_favorite(tid, context.owner)
             if source and source["problem"]:
                 problem, ocr = study_problem(source["problem"], source["request"]), source["question_ocr"]
@@ -447,6 +457,33 @@ class TaskCommands:
             if ocr.get("needs_confirmation"):
                 await self._text(context, self._confirmation_help(tid))
                 return
+            source_for_flow = {**(source or {}), "task_id": tid, "problem": problem,
+                               "question_ocr": ocr}
+            if not attachments and not tail:
+                await self._create_check_flow(context, source=source_for_flow)
+                return
+            if not attachments and tail:
+                try:
+                    selection, remaining = split_pdf_selection(tail)
+                except PDFError as exc:
+                    await self._text(context, str(exc))
+                    return
+                if selection and not remaining:
+                    await self._create_check_flow(context, source=source_for_flow, selection=selection)
+                    return
+            if any(_is_pdf(item) for item in attachments):
+                try:
+                    selection, tail = split_pdf_selection(tail)
+                    if not selection:
+                        raise PDFError(
+                            f"草稿含 PDF 时请明确指定页码；每份 PDF 和每个任务最多读取 "
+                            f"{MAX_INPUT_PAGES} 页，例如“/查错 {tid} 第3页”。")
+                except PDFError as exc:
+                    await self._text(context, str(exc))
+                    return
+                attachments = [{**item, "pdf_selection": selection} if _is_pdf(item) else item
+                               for item in attachments]
+                request["attachments"] = attachments
             request.update(text=tail, problem_snapshot=problem, question_ocr=ocr, origin_id=tid)
         elif re.match(r"B\d+", args, re.I):
             try:
@@ -454,35 +491,100 @@ class TaskCommands:
             except (PDFError, ValueError) as exc:
                 await self._text(context, str(exc))
                 return
-            request.update(text=tail, question_attachments=[book])
+            selection = book.get("pdf_selection", "")
+            if not attachments and not tail:
+                await self._create_check_flow(context, question_attachments=[book])
+                return
+            draft = [{**item, "pdf_selection": selection} if _is_pdf(item) else item
+                     for item in attachments]
+            request.update(text=tail, question_attachments=[book], attachments=draft)
         elif attachments or quoted:
             if quoted or quoted_urls:
                 questions = [item for item in attachments if item["url"] in quoted_urls]
                 draft = [item for item in attachments if item["url"] not in quoted_urls]
                 request.update(quoted="", problem_snapshot=quoted)
             else:
-                questions, draft = attachments[:1], attachments[1:]
-            if any(_is_pdf(item) for item in questions):
+                questions = attachments[:1]
+                if len(attachments) > 1:
+                    draft = attachments[1:]
+                else:
+                    draft = []
+                    request["check_question_as_draft"] = True
+            if any(_is_pdf(item) for item in [*questions, *draft]):
                 try:
                     selection, request["text"] = split_pdf_selection(args)
                     if not selection:
-                        raise PDFError(f"使用 PDF 作题面时请明确指定页码；每份 PDF 每次最多读取 {MAX_INPUT_PAGES} 页，例如“/查错 第3页 我令 t=x”。")
+                        raise PDFError(f"使用 PDF 时请明确指定页码；每份 PDF 和每个任务最多读取 {MAX_INPUT_PAGES} 页，例如“/查错 第3页 我令 t=x”。")
                 except PDFError as exc:
                     await self._text(context, str(exc))
                     return
                 questions = [{**item, "pdf_selection": selection} if _is_pdf(item) else item
                              for item in questions]
+                draft = [{**item, "pdf_selection": selection} if _is_pdf(item) else item
+                         for item in draft]
             request.update(question_attachments=questions, attachments=draft)
         else:
-            await self._text(context, "用法：/查错 题号 草稿；也可同条附题目图和草稿图（第一张是题目）。")
+            same_material = False
+            flow_args = args
+            if re.match(r"^同页(?:\s+|$)", flow_args):
+                same_material = True
+                flow_args = re.sub(r"^同页\s*", "", flow_args, count=1)
+            try:
+                selection, instructions = split_pdf_selection(flow_args)
+            except PDFError as exc:
+                await self._text(context, str(exc))
+                return
+            if re.search(r"(?:^|\s)同页(?:\s|$)", instructions):
+                same_material = True
+                instructions = re.sub(r"(?:^|\s)同页(?:\s|$)", " ", instructions, count=1).strip()
+            await self._create_check_flow(context, selection=selection,
+                                          instructions=instructions, same_material=same_material)
             return
-        if not (request["text"] or request["quoted"] or request["attachments"]):
+        if not (request["text"] or request["quoted"] or request["attachments"]
+                or request.get("check_question_as_draft")):
+            if request.get("problem_snapshot") or request.get("question_attachments"):
+                await self._create_check_flow(
+                    context, question_attachments=request.get("question_attachments") or (),
+                    problem_snapshot=request.get("problem_snapshot", ""),
+                    question_ocr=request.get("question_ocr"), instructions=request.get("text", ""))
+                return
             await self._text(context, "请附上草稿图或写出推导。使用题号或书籍时，同条图片均作草稿。")
             return
         if len(request["text"]) + len(quoted) > 24000:
             await self._text(context, "材料超过 2.4 万字符，请按小问拆分。")
             return
         await self._submit(context, request)
+
+    async def _configure_check_flow(self, context, task, tail, attachments):
+        request = task["request"]
+        try:
+            selection, remainder = split_pdf_selection(tail) if tail else ("", "")
+        except PDFError as exc:
+            await self._text(context, str(exc))
+            return
+        if selection:
+            request["check_next_pdf_selection"] = selection
+        if remainder:
+            previous = request.get("check_instructions", "")
+            request["check_instructions"] = "\n".join(value for value in (previous, remainder) if value)
+        try:
+            updated = self.store.update_collection_request(task["task_id"], context.owner, request)
+        except ValueError as exc:
+            await self._text(context, str(exc))
+            return
+        if attachments:
+            await self._accept_check_flow_attachments(context, attachments)
+            return
+        request = updated["request"]
+        selection = request.get("check_next_pdf_selection", "")
+        if selection:
+            await self._text(context, f"{task['task_id']} 已记录下一份 PDF 的页码 {selection}；请下一条单独发送 PDF 文件。")
+        elif request.get("check_stage") == "question":
+            await self._text(context, f"{task['task_id']} 正在等题目图，请下一条单独发送题目图片或 PDF。")
+        elif request.get("check_stage") == "ready":
+            await self._text(context, f"{task['task_id']} 的同页题目和作答已收到，发送 /开始 {task['task_id']} 即可查错。")
+        else:
+            await self._text(context, f"{task['task_id']} 正在等草稿图；可逐张发送，收齐后发送 /开始 {task['task_id']}。")
 
     async def _book_command(self, context, action, args, attachments):
         if not hasattr(self, "pending_book_uploads"):
@@ -580,8 +682,16 @@ class TaskCommands:
                 request = {"text": "", "extra": tail, "quoted": "",
                            "attachments": [item, *attachments]}
                 if any(_is_pdf(extra) for extra in attachments):
-                    # Extra PDFs are supporting material, not the question itself.
-                    request["secondary_pdf_auto"] = True
+                    try:
+                        pages = pdf_pages_from_text(tail)
+                    except PDFError as exc:
+                        await self._text(context, str(exc))
+                        return
+                    if pages:
+                        selection = "第" + "、".join(map(str, sorted(pages))) + "页"
+                        request["attachments"] = [
+                            {**extra, "pdf_selection": selection} if _is_pdf(extra) else extra
+                            for extra in attachments]
                 await self._submit(context, request)
                 return
             if action == "引用" and re.fullmatch(BOOK_ID, args, re.I):

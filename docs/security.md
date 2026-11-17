@@ -4,7 +4,7 @@
 
 ## 当前资源边界
 
-- 普通 PDF：每个文件最多 10 MB；题目 PDF 必须明确指定物理页码；单份默认最多 10 页、单任务默认合计最多 20 页（`PDF_INPUT_MAX_PAGES` / `PDF_TASK_MAX_PAGES`）。非题目 PDF 未写页码时自动读取前 5 页。
+- 普通 PDF：每个文件最多 10 MB；每份要读取的 PDF 都必须明确指定物理页码，单份 PDF 和整项任务合计默认最多 5 页。`PDF_INPUT_MAX_PAGES` / `PDF_TASK_MAX_PAGES` 只能在 1–5 之间调低或设置；所有 PDF 类别均执行相同规则。
 - 书库 PDF：每份默认最多 100 MB，已存 PDF 总量默认最多 1 GB（`BOOK_MAX_PDF_MB` / `BOOK_LIBRARY_MAX_MB`）；下载时限 30 分钟，并保留至少 64 MB 磁盘空间。
 - 图片渲染限制页面像素、边长和 PNG 体积；PDF 通过可终止的渲染子进程分批处理。
 - 任务队列、用户配额、附件数量、结果保留期与数据目录容量均有限制。

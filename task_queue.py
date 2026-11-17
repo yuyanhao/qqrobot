@@ -7,9 +7,9 @@ import logging
 from ai import AIError
 from input_cache import InputCacheError, cache_attachments, discard_cached_attachments
 from message_input import _is_pdf, _is_text_file
-from pdf_tools import (MAX_INPUT_PAGES, MAX_TASK_INPUT_PAGES, PDFError,
-                       SECONDARY_INPUT_PAGES, pdf_pages_from_text,
-                       pdf_selection_page_count, split_pdf_selection)
+from pdf_tools import (MAX_INPUT_PAGES, PDFError,
+                       pdf_pages_from_text, pdf_selection_page_count,
+                       pdf_task_page_budget, split_pdf_selection)
 from solver import STUDY_ACTIONS, InputError
 from task_store import ACTIVE, QueueFull, describe
 
@@ -21,79 +21,52 @@ class TaskQueue:
 
     @staticmethod
     def _estimated_ocr_batches(request):
-        attachments = [*(request.get("question_attachments") or []),
-                       *(request.get("attachments") or [])]
-        pending_images = 0
-        batches = 0
+        question_attachments = request.get("question_attachments") or []
         try:
             text_pages = len(pdf_pages_from_text(request.get("text") or ""))
         except PDFError:
             text_pages = 0
-        secondary = bool(
-            request.get("parent_id") or request.get("retry_of") or request.get("collected")
-            or request.get("secondary_pdf_auto") or request.get("action") == "查错")
-        for item in attachments:
-            if item.get("book_id") or _is_pdf(item):
-                if pending_images:
-                    batches += (pending_images + 3) // 4
-                    pending_images = 0
-                selection = item.get("pdf_selection")
-                if selection:
-                    try:
-                        pages = pdf_selection_page_count(selection)
-                    except PDFError:
-                        pages = 0
+
+        def estimate_role(attachments):
+            pending_images = 0
+            batches = 0
+            for item in attachments:
+                if item.get("book_id") or _is_pdf(item):
+                    if pending_images:
+                        batches += (pending_images + 3) // 4
+                        pending_images = 0
+                    selection = item.get("pdf_selection")
+                    if selection:
+                        try:
+                            pages = pdf_selection_page_count(selection)
+                        except PDFError:
+                            pages = 0
+                    else:
+                        pages = text_pages
+                    batches += (pages + 3) // 4
+                elif _is_text_file(item):
+                    if pending_images:
+                        batches += (pending_images + 3) // 4
+                        pending_images = 0
                 else:
-                    pages = text_pages or (SECONDARY_INPUT_PAGES if secondary else 0)
-                batches += (pages + 3) // 4
-            elif _is_text_file(item):
-                if pending_images:
-                    batches += (pending_images + 3) // 4
-                    pending_images = 0
-            else:
-                pending_images += 1
-        if pending_images:
-            batches += (pending_images + 3) // 4
+                    pending_images += 1
+            if pending_images:
+                batches += (pending_images + 3) // 4
+            return batches
+
+        batches = estimate_role(question_attachments)
+        if request.get("check_question_as_draft"):
+            batches += estimate_role(question_attachments)
+        batches += estimate_role(request.get("attachments") or [])
         return batches
 
     @staticmethod
     def _pdf_page_budget(request):
         """Validate page selections and the whole-task page budget before queueing."""
-        question_pdfs = [item for item in request.get("question_attachments") or []
-                         if _is_pdf(item) or item.get("book_id")]
-        attachment_pdfs = [item for item in request.get("attachments") or []
-                           if _is_pdf(item) or item.get("book_id")]
-        if not question_pdfs and not attachment_pdfs:
-            return 0
-        secondary_attachments = bool(
-            request.get("parent_id") or request.get("retry_of") or request.get("collected")
-            or request.get("secondary_pdf_auto") or request.get("action") == "查错")
-        primary = question_pdfs + ([] if secondary_attachments else attachment_pdfs)
-        secondary = attachment_pdfs if secondary_attachments else []
-        text_pages = pdf_pages_from_text(request.get("text") or "")
-        total = 0
-        for item in primary:
-            specification = item.get("pdf_selection")
-            if specification:
-                total += len(pdf_pages_from_text(specification))
-            elif text_pages:
-                total += len(text_pages)
-            else:
-                raise PDFError(
-                    f"使用 PDF 作题面时请明确指定页码；每份 PDF 每次最多读取 {MAX_INPUT_PAGES} 页。")
-        for item in secondary:
-            specification = item.get("pdf_selection")
-            if specification:
-                total += len(pdf_pages_from_text(specification))
-            elif text_pages:
-                total += len(text_pages)
-            else:
-                total += SECONDARY_INPUT_PAGES
-        if total > MAX_TASK_INPUT_PAGES:
-            raise PDFError(
-                f"本任务 PDF 页码合计 {total} 页，超过上限 {MAX_TASK_INPUT_PAGES} 页；"
-                "请分题提交或减少页码。")
-        return total
+        pdfs = [item for item in [*(request.get("question_attachments") or []),
+                                  *(request.get("attachments") or [])]
+                if _is_pdf(item) or item.get("book_id")]
+        return pdf_task_page_budget(pdfs, request.get("text") or "")
 
     def _registration_receipt(self, tid, action=None, request=None):
         estimated = self._estimated_ocr_batches(request or {}) if request else 0
@@ -157,6 +130,71 @@ class TaskQueue:
                     return
                 await self._text(context, f"{tid} 已保存本次材料（新增 {added} 个附件）。\n" + describe(updated))
 
+    async def _create_check_flow(self, context, *, source=None, question_attachments=(),
+                                 problem_snapshot="", question_ocr=None, selection="",
+                                 instructions="", same_material=False):
+        question_attachments = list(question_attachments)
+        if source:
+            problem_snapshot = source["problem"]
+            question_ocr = source["question_ocr"]
+        request = {
+            "action": "查错", "check_flow": True,
+            "check_stage": "draft" if source or question_attachments or problem_snapshot else "question",
+            "check_question_attachment_count": len(question_attachments),
+            "check_next_pdf_selection": selection,
+            "check_instructions": instructions,
+            "check_same_material": bool(same_material),
+            "collected": True, "text": "", "quoted": "", "attachments": question_attachments,
+            "question_attachments": [], "problem_snapshot": problem_snapshot,
+            "question_ocr": question_ocr or {},
+        }
+        if source:
+            request["origin_id"] = source["task_id"]
+        async with self.collection_lock:
+            existing = self.store.collecting(context.owner)
+            if existing:
+                await self._text(
+                    context,
+                    f"你已有尚未开始的材料收集 {existing['task_id']}。"
+                    "为避免后续单独发送的图片归错题号，请先完成它，或发送 "
+                    f"/取消 {existing['task_id']} 后再开始查错。\n{describe(existing)}",
+                )
+                return
+            self.store.cleanup(self.settings.result_ttl)
+            if self.store.disk_bytes() >= self.settings.disk_limit_mb * 1024**2:
+                await self._text(context, "结果存储已达到容量预算，请管理员清理过期文件或调整预算。")
+                return
+            try:
+                task, created = self.store.create(
+                    context.owner, context.message_id, context.kind, context.target, request,
+                    self.settings.max_queue, self.settings.max_user_tasks, self.settings.max_daily,
+                    state="collecting")
+            except QueueFull as exc:
+                await self._text(context, str(exc))
+                return
+        tid = task["task_id"]
+        if not created:
+            await self._text(context, describe(task))
+            return
+        if source:
+            prompt = (f"已关联原题 {source['task_id']}，查错材料编号是 {tid}。\n"
+                      "请下一条单独发送草稿图；多张草稿可逐张发送。都发完后发送 /开始 " + tid + "。")
+        elif question_attachments:
+            prompt = (f"已设置题面，查错材料编号是 {tid}。\n"
+                      "请下一条单独发送草稿图；多张草稿可逐张发送。都发完后发送 /开始 " + tid + "。")
+        else:
+            prompt = (f"已开始分步查错，材料编号是 {tid}。\n"
+                      "请下一条单独发送题目图或 PDF；收到后我会提示你再单独发送草稿图。\n"
+                      "草稿可逐张发送，收齐后发送 /开始 " + tid + "。")
+        if same_material:
+            prompt += "\n如果这一份材料同时含题目和作答，已按同页查错设置。"
+        if selection:
+            prompt += f"\n已记录下一份 PDF 的页码：{selection}。"
+        if context.kind == "group":
+            prompt += "\n群聊中每条单独发送的图片消息都要 @ 机器人。"
+        prompt += f"\n需要取消时发送 /取消 {tid}。"
+        await self._text(context, prompt)
+
     async def _save_collection_materials(self, context, task, text, quoted, attachments, *, selection=None):
         """Save one batch while the caller holds collection_lock."""
         tid = task["task_id"]
@@ -208,6 +246,59 @@ class TaskQueue:
                 return
         await self._text(context, f"{tid} 已保存本次材料（新增 {added} 个附件）。\n" + describe(updated))
 
+    async def _accept_check_flow_attachments(self, context, attachments):
+        pending = self.store.collecting(context.owner)
+        if not pending or not pending["request"].get("check_flow"):
+            return False
+        if not attachments:
+            return False
+        tid = pending["task_id"]
+        if len(attachments) > 4:
+            await self._text(context, "一次最多发送 4 个材料，请分开发送。")
+            return True
+        async with self.collection_lock:
+            task = self.store.get(tid, context.owner)
+            if not task or task["state"] != "collecting" or not task["request"].get("check_flow"):
+                await self._text(context, f"{tid} 已不在查错材料收集状态，请先查询题号。")
+                return True
+            request = task["request"]
+            was_question = request.get("check_stage") == "question"
+            has_pdf = any(_is_pdf(item) for item in attachments)
+            selection = request.get("check_next_pdf_selection", "")
+            if has_pdf and not selection:
+                await self._text(context, f"PDF 必须先指定页码。请先发送 /查错 {tid} 第3页，再单独发送 PDF。")
+                return True
+            try:
+                updated, added = await self._save_collection_materials(
+                    context, task, "", "", attachments,
+                    selection=selection if has_pdf else None)
+            except (InputCacheError, ValueError) as exc:
+                await self._text(context, f"{tid} 材料未保存：{exc}。请重新发送这份材料。")
+                return True
+            request = updated["request"]
+            stage = request.get("check_stage")
+            if stage == "question":
+                request["check_question_attachment_count"] = len(request.get("attachments") or [])
+                request["check_stage"] = "ready" if request.get("check_same_material") else "draft"
+            request["check_next_pdf_selection"] = ""
+            try:
+                updated = self.store.update_collection_request(tid, context.owner, request)
+            except ValueError as exc:
+                await self._text(context, f"{tid} 状态已变化：{exc}")
+                return True
+            question_count = updated["request"].get("check_question_attachment_count", 0)
+            draft_count = max(0, len(updated["request"].get("attachments") or []) - question_count)
+            stage = updated["request"].get("check_stage")
+        if stage == "ready":
+            reply = f"{tid} 已保存同页题目和作答。发送 /开始 {tid} 即可查错。"
+        elif was_question:
+            reply = f"{tid} 已保存题目图。请下一条单独发送草稿图；可逐张发送，收齐后发送 /开始 {tid}。"
+        else:
+            reply = (f"{tid} 已保存草稿（新增 {added} 张，目前共 {draft_count} 张）。"
+                     f"可继续单独发送草稿图；收齐后发送 /开始 {tid}。")
+        await self._text(context, reply)
+        return True
+
     async def _start_collection(self, context, tid):
         async with self.collection_lock:
             if self.queue.full():
@@ -215,14 +306,42 @@ class TaskQueue:
                 return
             current = self.store.get(tid, context.owner)
             if current:
+                request = current["request"]
+                if request.get("check_flow"):
+                    stage = request.get("check_stage")
+                    if stage == "question":
+                        await self._text(context, f"{tid} 还没有收到题目图，请先单独发送题目图片或 PDF。")
+                        return
+                    attachments = list(request.get("attachments") or [])
+                    question_count = int(request.get("check_question_attachment_count", 0))
+                    if question_count > len(attachments):
+                        await self._text(context, f"{tid} 题目材料状态不完整，请重新发送题目图。")
+                        return
+                    question_attachments = (attachments[:question_count] if question_count
+                                             else list(request.get("question_attachments") or []))
+                    draft_attachments = attachments[question_count:]
+                    same_material = bool(request.get("check_same_material"))
+                    if same_material and question_attachments:
+                        request["check_question_as_draft"] = True
+                    elif not draft_attachments:
+                        await self._text(context, f"{tid} 还没有收到草稿图，请单独发送草稿图片后再开始。")
+                        return
+                    request["question_attachments"] = question_attachments
+                    request["attachments"] = draft_attachments
+                    request["text"] = "\n".join(
+                        value for value in (request.get("check_instructions", ""), request.get("text", "")) if value)
+                    for key in ("check_flow", "check_stage", "check_question_attachment_count",
+                                "check_next_pdf_selection", "check_instructions", "check_same_material"):
+                        request.pop(key, None)
                 try:
-                    self._pdf_page_budget(current["request"])
+                    self._pdf_page_budget(request)
                 except (PDFError, ValueError) as exc:
                     await self._text(context, str(exc))
                     return
             try:
                 task = self.store.start_collection(tid, context.owner, max_active=self.settings.max_queue,
-                                                   max_user_active=self.settings.max_user_tasks)
+                                                   max_user_active=self.settings.max_user_tasks,
+                                                   request=request if current else None)
             except (ValueError, QueueFull) as exc:
                 await self._text(context, str(exc))
                 return
