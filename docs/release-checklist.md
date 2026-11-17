@@ -12,11 +12,11 @@
 
 ## 仓库设置
 
-- [ ] GitHub 描述、topics、主页和社交预览图已补齐。
-- [ ] Secret scanning、push protection、Dependabot alerts 已启用。
-- [ ] `main` 要求 CI 通过并禁止 force push；`v*` 标签保护规则已设置。
-- [ ] GitHub `release` environment 的必需审阅人已配置（或明确接受无人审阅）。
-- [ ] 确认不使用 Wiki 时关闭 Wiki。
+- [x] GitHub 描述与 topics 已配置；[draft PR #1](https://github.com/yuyanhao/qqrobot/pull/1) 已创建。
+- [x] Secret scanning、push protection、Dependabot alerts/security updates 已启用。
+- [x] `main` 要求 `Python 3.12` / `Python 3.14` 状态检查、禁止 force push；`v*` 标签 ruleset 已设置。
+- [x] GitHub `release` environment 的必需审阅人已配置为 `yuyanhao`。
+- [ ] 社交预览图和 homepage 未配置；确认是否关闭未使用的 Wiki。
 - [x] 已按 QQ 官方文档于 2026-11-17 复核群聊/单聊窗口、主动消息频控及机器人权限；核对记录见 `docs/qq-platform-rules.md`。
 
 ## 发布与验收
