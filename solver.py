@@ -310,15 +310,10 @@ class Solver:
         if checking and request.get("question_attachments"):
             question = {**task, "request": {**request, "attachments": request["question_attachments"], "text": ""}}
             blocks, question_ocr, _ = await self.attachment_inputs(
-                question, directory, question_only=bool(request.get("check_question_as_draft")))
+                question, directory, question_only=True)
             problem = "\n\n".join(part for part in (problem, *blocks) if part)
             self.record_question(task, problem, question_ocr)
-        draft_task = task
-        if checking and request.get("check_question_as_draft"):
-            draft_attachments = [*(request.get("question_attachments") or []),
-                                *(request.get("attachments") or [])]
-            draft_task = {**task, "request": {**request, "attachments": draft_attachments}}
-        blocks, current_ocr, _ = await self.attachment_inputs(draft_task, directory, draft=checking)
+        blocks, current_ocr, _ = await self.attachment_inputs(task, directory, draft=checking)
         supplied = "\n\n".join(part for part in (request.get("text"), request.get("quoted"), *blocks) if part).strip()
         if not problem and not checking:
             problem, supplied = supplied, ""

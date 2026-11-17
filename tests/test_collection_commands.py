@@ -82,7 +82,7 @@ def test_collect_append_and_start_keep_one_task_and_wait_for_all_images(tmp_path
             assert collected["state"] == "collecting" and bot.queue.empty()
             assert len(collected["request"]["attachments"]) == 3
             assert calls == [1, 2, 3]
-            assert f"/开始 {tid}" in "\n".join(bot.media.sent)
+            assert f"/解题 {tid}" in "\n".join(bot.media.sent)
             await handle(bot, f"/开始 {tid}", "start")
             assert bot.store.get(tid)["state"] == "queued"
             assert bot.queue.qsize() == 1 and bot.queue.get_nowait() == tid
@@ -400,7 +400,7 @@ def test_followup_of_collecting_task_prompts_start_instead_of_new_job(tmp_path):
             tid = bot.store.collecting("u")["task_id"]
             await handle(bot, f"/追问 {tid} 请解释", "premature-followup")
             assert bot.queue.empty() and len(bot.store.list_recent("u")) == 1
-            assert f"/开始 {tid}" in bot.media.sent[-1]
+            assert f"/解题 {tid}" in bot.media.sent[-1]
         finally:
             bot.store.close()
     asyncio.run(check())

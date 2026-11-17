@@ -145,9 +145,6 @@ class TaskBot(TaskCommands, TaskQueue, TaskDelivery, botpy.Client):
             text = clean_text(getattr(message, "content", "") or "").strip()
             text = re.sub(r"^[/／]\s*", "/", text)
             quoted, attachments, quoted_urls = collect_attachments(message, raw)
-            if (attachments and not text.startswith("/")
-                    and await self._accept_check_flow_attachments(context, attachments)):
-                return
             if kind == "c2c" and not text.startswith("/"):
                 pdfs = [item for item in attachments if _is_pdf(item)]
                 unquoted = not any(item["url"] in quoted_urls for item in attachments)

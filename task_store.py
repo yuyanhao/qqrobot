@@ -225,6 +225,19 @@ class TaskStore:
             "SELECT * FROM tasks WHERE owner=? AND state='collecting' ORDER BY id DESC LIMIT 1",
             (owner,)).fetchone())
 
+    def active_dependents(self, owner, task_id):
+        """Active or collecting tasks derived from task_id (follow-up, retry, check)."""
+        slots = ",".join("?" for _ in ACTIVE)
+        rows = self.db.execute(
+            f"SELECT * FROM tasks WHERE owner=? AND (state='collecting' OR state IN ({slots}))",
+            (owner, *ACTIVE)).fetchall()
+        dependents = []
+        for row in rows:
+            request = json.loads(row["request"])
+            if task_id in (request.get("parent_id"), request.get("retry_of"), request.get("origin_id")):
+                dependents.append(self._decode(row))
+        return dependents
+
     @staticmethod
     def _collection_materials(request):
         if not isinstance(request, dict):
@@ -464,23 +477,11 @@ def describe(task):
     if task["state"] == "completed" and result.get("study_text"):
         lines[0] = f"{task['task_id']}｜已生成{task['request']['action']}反馈"
     if task["state"] == "collecting":
-        if task["request"].get("check_flow"):
-            request = task["request"]
-            count = len(request.get("attachments") or [])
-            stage = request.get("check_stage")
-            if stage == "question":
-                lines.append("请下一条单独发送题目图片或 PDF。")
-            elif stage == "draft":
-                question_count = request.get("check_question_attachment_count", 0)
-                lines.append(f"已收到草稿 {max(0, count - question_count)} 份；可继续单独发送草稿图。")
-            elif stage == "ready":
-                lines.append("题目和作答已在同页，材料已经齐备。")
-            lines.append(f"材料齐备后发送 /开始 {task['task_id']}。")
-        else:
-            count = len(task["request"].get("attachments") or [])
-            lines.append(f"已收集 {count} 个附件，最多 12 个；尚未开始解题。")
-            lines.append(f"/补图 {task['task_id']}（同条消息附图片）")
-            lines.append(f"/开始 {task['task_id']}（收齐材料后解题）")
+        count = len(task["request"].get("attachments") or [])
+        lines.append(f"已收集 {count} 个附件，最多 12 个；尚未开始解题。")
+        lines.append(f"/补图 {task['task_id']}（同条消息附图片）")
+        lines.append(f"/解题 {task['task_id']}（收齐材料后解题）")
+        lines.append(f"/查错 {task['task_id']}（收齐材料后查错）")
     if result.get("answer_status") == "uncertain": lines.append("结论：仍有疑点，不能视为已解决")
     if result.get("verification"): lines.append("复核：" + result["verification"])
     if result.get("total_pages"): lines.append(f"完整 PDF：{result['total_pages']} 页")

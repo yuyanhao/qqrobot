@@ -43,6 +43,11 @@ CHECK_QUESTION_VISION_PROMPT = r"""你是查错任务的题面识别助手。只
 只输出 JSON，格式：{"problem_latex":"题目原文","notes":"识别疑点、页码/核验码或空字符串","needs_confirmation":false}
 中文和公式混排，公式只用 $...$ 包裹；保留完整条件、小问和题图标注；不要解题。看不清且会改变题意的内容须标注并设置 needs_confirmation=true。"""
 
+CHECK_ROLE_PROMPT = r"""判断每张图片在查错材料中的角色，不要转写内容，也不要解题。
+可选角色：question（题目、题面或题目的一部分）、draft（学生的草稿或解答）、both（同一张图里既有题目又有作答）、unknown（无法判断）。
+只输出 JSON：{"roles":["question|draft|both|unknown", ...]}，按输入顺序每张图一个值，数量必须与图片数量一致。
+印刷题与手写草稿通常容易区分；若同一页同时有印刷题目和学生作答，使用 both；只有题干没有作答时使用 question。"""
+
 DRAFT_VISION_PROMPT = r"""逐行转写学生的数学或物理解题草稿，保留步骤顺序、等号、上下标和原有错误。划去的内容标记为已划去。
 同一页面还包含原题时，只转写学生的作答和推导，不要重复抄录题干。
 只输出 JSON：{"problem_latex":"草稿的逐行转写","notes":"看不清的位置或空字符串"}
@@ -535,6 +540,28 @@ class DeepSeek:
                                  {"role": "user", "content": content}], stage="识别草稿" if draft else "识题",
                                 validator=validate,
                                 timeout=timeout, max_tokens=max_tokens, model=self.vision_model)
+
+    async def classify_check_materials(self, images, timeout=60):
+        """Label each supplied image as question, draft, both or unknown."""
+        if not images:
+            return {"roles": []}
+        content = [{"type": "text", "text": f"共 {len(images)} 张图片，请按顺序判断每张图的角色。"}]
+        for data, mime in images:
+            content.append({"type": "image_url", "image_url": {
+                "url": f"data:{mime};base64," + base64.b64encode(data).decode("ascii")}})
+
+        def validate(data):
+            roles = data.get("roles")
+            if not isinstance(roles, list) or len(roles) != len(images):
+                raise AIError("材料角色数量与图片数量不一致", "schema")
+            if any(role not in ("question", "draft", "both", "unknown") for role in roles):
+                raise AIError("材料角色取值无效", "schema")
+            return {"roles": roles}
+
+        return await self._json([{"role": "system", "content": CHECK_ROLE_PROMPT},
+                                 {"role": "user", "content": content}],
+                                stage="材料分类", validator=validate, timeout=timeout,
+                                max_tokens=800, model=self.vision_model)
 
     async def study(self, action, problem, material, *, previous_hints=(), timeout=120):
         checking = action == "查错"
