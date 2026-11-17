@@ -3,7 +3,7 @@
 ## 代码与版本
 
 - [x] P0/P1 修复与回归覆盖已提交；本机 `python -m pytest -q` 通过（当前 418 passed / 2 skipped）。
-- [ ] 推送后确认 CI 在 Python 3.12、3.14 全绿。
+- [x] 已推送到 `origin/codex/prepare-v0.3.0`；[GitHub Actions run 44031595227](https://github.com/yuyanhao/qqrobot/actions/runs/44031595227) 成功，Python 3.12、3.14 两个矩阵均通过。
 - [x] `LICENSE`（MIT，yuyanhao）、安全政策、贡献说明和用户文档已核对。
 - [x] 复核本版本 `CHANGELOG.md` 顶部段落；`VERSION`、README 发布链接及 Docker/更新命令一致。
 - [x] `python tools/check_release.py`、`ruff check .`、`python settings.py --allow-missing-credentials` 通过；发布工作流只提取当前版本说明。

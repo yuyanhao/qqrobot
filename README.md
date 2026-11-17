@@ -1,5 +1,9 @@
 # qqrobot
 
+![CI](https://github.com/yuyanhao/qqrobot/actions/workflows/ci.yml/badge.svg)
+![Release](https://img.shields.io/github/v/release/yuyanhao/qqrobot)
+![License](https://img.shields.io/github/license/yuyanhao/qqrobot)
+
 当前版本：[v1.0.0](https://github.com/yuyanhao/qqrobot/releases/tag/v1.0.0)。变更内容见 [CHANGELOG.md](CHANGELOG.md)。
 
 `VERSION` 保存版本号；主分支更新此文件时，发布流程会创建对应 Git 标签和 GitHub Release。

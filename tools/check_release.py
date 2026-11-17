@@ -30,7 +30,7 @@ def main():
     missing = [reference for reference in required if reference not in readme]
     if missing:
         raise SystemExit("README.md is missing current release references: " + ", ".join(missing))
-    if not readme.startswith(f"# qqrobot\n\n当前版本：[v{version}]"):
+    if not readme.startswith("# qqrobot\n") or f"当前版本：[v{version}]" not in readme[:800]:
         raise SystemExit("README.md current-version banner does not match VERSION")
     print(f"Release metadata is consistent for v{version}.")
 
