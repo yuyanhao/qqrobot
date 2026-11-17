@@ -7,9 +7,9 @@ import logging
 from ai import AIError
 from input_cache import InputCacheError, cache_attachments, discard_cached_attachments
 from message_input import _is_pdf, _is_text_file
-from pdf_tools import (MAX_INPUT_PAGES, MAX_TASK_INPUT_PAGES, PDFError,
-                       SECONDARY_INPUT_PAGES, pdf_pages_from_text,
-                       pdf_selection_page_count, split_pdf_selection)
+from pdf_tools import (MAX_INPUT_PAGES, PDFError,
+                       pdf_pages_from_text, pdf_selection_page_count,
+                       pdf_task_page_budget, split_pdf_selection)
 from solver import STUDY_ACTIONS, InputError
 from task_store import ACTIVE, QueueFull, describe
 
@@ -29,9 +29,6 @@ class TaskQueue:
             text_pages = len(pdf_pages_from_text(request.get("text") or ""))
         except PDFError:
             text_pages = 0
-        secondary = bool(
-            request.get("parent_id") or request.get("retry_of") or request.get("collected")
-            or request.get("secondary_pdf_auto") or request.get("action") == "查错")
         for item in attachments:
             if item.get("book_id") or _is_pdf(item):
                 if pending_images:
@@ -44,7 +41,7 @@ class TaskQueue:
                     except PDFError:
                         pages = 0
                 else:
-                    pages = text_pages or (SECONDARY_INPUT_PAGES if secondary else 0)
+                    pages = text_pages
                 batches += (pages + 3) // 4
             elif _is_text_file(item):
                 if pending_images:
@@ -59,41 +56,10 @@ class TaskQueue:
     @staticmethod
     def _pdf_page_budget(request):
         """Validate page selections and the whole-task page budget before queueing."""
-        question_pdfs = [item for item in request.get("question_attachments") or []
-                         if _is_pdf(item) or item.get("book_id")]
-        attachment_pdfs = [item for item in request.get("attachments") or []
-                           if _is_pdf(item) or item.get("book_id")]
-        if not question_pdfs and not attachment_pdfs:
-            return 0
-        secondary_attachments = bool(
-            request.get("parent_id") or request.get("retry_of") or request.get("collected")
-            or request.get("secondary_pdf_auto") or request.get("action") == "查错")
-        primary = question_pdfs + ([] if secondary_attachments else attachment_pdfs)
-        secondary = attachment_pdfs if secondary_attachments else []
-        text_pages = pdf_pages_from_text(request.get("text") or "")
-        total = 0
-        for item in primary:
-            specification = item.get("pdf_selection")
-            if specification:
-                total += len(pdf_pages_from_text(specification))
-            elif text_pages:
-                total += len(text_pages)
-            else:
-                raise PDFError(
-                    f"使用 PDF 作题面时请明确指定页码；每份 PDF 每次最多读取 {MAX_INPUT_PAGES} 页。")
-        for item in secondary:
-            specification = item.get("pdf_selection")
-            if specification:
-                total += len(pdf_pages_from_text(specification))
-            elif text_pages:
-                total += len(text_pages)
-            else:
-                total += SECONDARY_INPUT_PAGES
-        if total > MAX_TASK_INPUT_PAGES:
-            raise PDFError(
-                f"本任务 PDF 页码合计 {total} 页，超过上限 {MAX_TASK_INPUT_PAGES} 页；"
-                "请分题提交或减少页码。")
-        return total
+        pdfs = [item for item in [*(request.get("question_attachments") or []),
+                                  *(request.get("attachments") or [])]
+                if _is_pdf(item) or item.get("book_id")]
+        return pdf_task_page_budget(pdfs, request.get("text") or "")
 
     def _registration_receipt(self, tid, action=None, request=None):
         estimated = self._estimated_ocr_batches(request or {}) if request else 0

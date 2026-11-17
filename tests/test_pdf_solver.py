@@ -110,6 +110,48 @@ def test_pdf_reads_only_the_explicit_five_page_selection(tmp_path, monkeypatch, 
     asyncio.run(check())
 
 
+def test_legacy_check_task_cannot_exceed_aggregate_pdf_page_limit(tmp_path, monkeypatch):
+    async def check():
+        store = TaskStore(tmp_path)
+        try:
+            question = {**PDF_ATTACHMENT, "pdf_selection": "第1-3页"}
+            draft = {"url": "https://example.com/draft.pdf", "name": "draft.pdf",
+                     "pdf_selection": "第4-6页"}
+            task, _ = store.create("u", "legacy-check", "c2c", "u", {
+                "action": "查错", "text": "我令 t=x", "question_attachments": [question],
+                "attachments": [draft],
+            })
+
+            async def forbidden_download(*args, **kwargs):
+                raise AssertionError("PDF validation must happen before download or OCR")
+
+            monkeypatch.setattr("solver.download_file", forbidden_download)
+            with pytest.raises(InputError, match="超过上限 5 页"):
+                await Solver(store, Recognizer(), SimpleNamespace()).run_study(
+                    task, store.task_dir(task["task_id"]))
+        finally:
+            store.close()
+    asyncio.run(check())
+
+
+def test_legacy_pdf_task_without_selection_is_rejected_before_download(tmp_path, monkeypatch):
+    async def check():
+        store = TaskStore(tmp_path)
+        try:
+            task = make_task(store, text="解释这本书")
+
+            async def forbidden_download(*args, **kwargs):
+                raise AssertionError("PDF validation must happen before download or OCR")
+
+            monkeypatch.setattr("solver.download_file", forbidden_download)
+            with pytest.raises(InputError, match="明确指定页码"):
+                await Solver(store, Recognizer(), SimpleNamespace()).inputs(
+                    task, store.task_dir(task["task_id"]))
+        finally:
+            store.close()
+    asyncio.run(check())
+
+
 def test_followup_solution_summary_is_bounded_and_keeps_key_steps():
     solution = {
         "title": "T" * 200,
@@ -123,6 +165,18 @@ def test_followup_solution_summary_is_bounded_and_keeps_key_steps():
     assert len(summary["steps"]) == 10
     assert all(len(step["text"]) <= 400 and len(step["math"]) <= 1000 for step in summary["steps"])
     assert len(summary["answer_latex"]) == 4000 and len(summary["check_latex"]) == 2000
+
+
+def test_solver_page_budget_validation_rejects_legacy_request_without_page_selection():
+    request = {"text": "解释一下", "attachments": [PDF_ATTACHMENT]}
+    with pytest.raises(InputError, match="明确指定页码"):
+        Solver._validate_pdf_page_budget(request)
+    request["attachments"][0] = {**PDF_ATTACHMENT, "pdf_selection": "第1-3页"}
+    request["question_attachments"] = [
+        {**PDF_ATTACHMENT, "pdf_selection": "第4-6页"},
+    ]
+    with pytest.raises(InputError, match="超过上限 5 页"):
+        Solver._validate_pdf_page_budget(request)
 
 
 class TruncatingRecognizer(Recognizer):
@@ -174,21 +228,21 @@ def test_truncated_single_image_retries_with_a_larger_budget(tmp_path, monkeypat
     asyncio.run(check())
 
 
-def test_secondary_pdf_auto_reads_the_first_pages(tmp_path, monkeypatch):
+def test_secondary_pdf_keeps_explicit_pages_without_auto_selection(tmp_path, monkeypatch):
     async def check():
         store = TaskStore(tmp_path)
         try:
             mock_download(monkeypatch)
-            expected = list(range(1, 6))
-            events, calls = mock_pdf_batches(monkeypatch, expected, total=13, selected=False)
+            expected = [2, 3]
+            events, calls = mock_pdf_batches(monkeypatch, expected, total=13, selected=True)
             ai = Recognizer()
-            task = make_task(store, text="解释一下")
+            task = make_task(store, text="第2-3页 解释一下")
             blocks, ocr, notes = await Solver(store, ai, SimpleNamespace()).attachment_inputs(
-                task, store.task_dir(task["task_id"]), secondary_pdf=True)
-            assert ai.batches == [[1, 2, 3, 4], [5]]
-            assert calls[0][3] == 5
-            assert "已自动读取前 5 页" in "；".join(notes)
-            assert "页面-1" in "".join(blocks)
+                task, store.task_dir(task["task_id"]), draft=True)
+            assert ai.batches == [expected]
+            assert calls[0][3] == 0
+            assert "已读取指定页面" in "；".join(notes)
+            assert "页面-2" in "".join(blocks)
             assert events[-1] == "closed"
         finally:
             store.close()

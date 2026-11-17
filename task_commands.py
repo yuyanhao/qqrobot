@@ -19,7 +19,7 @@ from book_library import (BOOK_ID, BOOK_UPLOAD_DISK_RESERVE_MB, MAX_BOOK_LIBRARY
 from file_tools import DownloadError, download_file
 from message_input import _is_pdf
 from pdf_tools import (MAX_INPUT_PAGES, MAX_INPUT_PDF_MB, PDFError,
-                       SECONDARY_INPUT_PAGES, split_pdf_selection)
+                       pdf_pages_from_text, split_pdf_selection)
 from solver import solution_text, study_problem
 from task_store import ACTIVE, STATES, TASK_RE, confirmation_key, describe
 
@@ -48,8 +48,8 @@ PICKER_STATES = {
 
 HELP = ("直接发送数学物理题的文字或图片即可获得题号。\n"
         f"普通 PDF 每份最多 {MAX_INPUT_PDF_MB} MB。群聊可附 PDF 直接发题，私聊请引用 PDF 并写明要求。\n"
-        f"可写“只读第3-5页”或“第2、5、8-10页”指定页码（从 1 开始）；每份 PDF 每次必须指定 1–{MAX_INPUT_PAGES} 页。\n"
-        f"草稿、补充/追问等非题目 PDF 未写页码时，自动读取前 {SECONDARY_INPUT_PAGES} 页。\n"
+        f"所有要识读的 PDF 都必须明确写页码；每份 PDF 和每个任务最多读取 {MAX_INPUT_PAGES} 页。\n"
+        "未写页码、页数超限或页码格式错误时不会读取 PDF。\n"
         "完成后：1–3 页发全部图片，超过 3 页发完整 PDF。\n"
         "群聊每条操作都需 @ 机器人；请用提交原题的账号在原会话操作。\n\n"
         "题号 或 /结果 题号：查询状态，完成后领取结果；无 PDF 时可分段领取文字稿\n"
@@ -462,16 +462,18 @@ class TaskCommands:
                 request.update(quoted="", problem_snapshot=quoted)
             else:
                 questions, draft = attachments[:1], attachments[1:]
-            if any(_is_pdf(item) for item in questions):
+            if any(_is_pdf(item) for item in [*questions, *draft]):
                 try:
                     selection, request["text"] = split_pdf_selection(args)
                     if not selection:
-                        raise PDFError(f"使用 PDF 作题面时请明确指定页码；每份 PDF 每次最多读取 {MAX_INPUT_PAGES} 页，例如“/查错 第3页 我令 t=x”。")
+                        raise PDFError(f"使用 PDF 时请明确指定页码；每份 PDF 和每个任务最多读取 {MAX_INPUT_PAGES} 页，例如“/查错 第3页 我令 t=x”。")
                 except PDFError as exc:
                     await self._text(context, str(exc))
                     return
                 questions = [{**item, "pdf_selection": selection} if _is_pdf(item) else item
                              for item in questions]
+                draft = [{**item, "pdf_selection": selection} if _is_pdf(item) else item
+                         for item in draft]
             request.update(question_attachments=questions, attachments=draft)
         else:
             await self._text(context, "用法：/查错 题号 草稿；也可同条附题目图和草稿图（第一张是题目）。")
@@ -580,8 +582,16 @@ class TaskCommands:
                 request = {"text": "", "extra": tail, "quoted": "",
                            "attachments": [item, *attachments]}
                 if any(_is_pdf(extra) for extra in attachments):
-                    # Extra PDFs are supporting material, not the question itself.
-                    request["secondary_pdf_auto"] = True
+                    try:
+                        pages = pdf_pages_from_text(tail)
+                    except PDFError as exc:
+                        await self._text(context, str(exc))
+                        return
+                    if pages:
+                        selection = "第" + "、".join(map(str, sorted(pages))) + "页"
+                        request["attachments"] = [
+                            {**extra, "pdf_selection": selection} if _is_pdf(extra) else extra
+                            for extra in attachments]
                 await self._submit(context, request)
                 return
             if action == "引用" and re.fullmatch(BOOK_ID, args, re.I):

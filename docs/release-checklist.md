@@ -2,12 +2,12 @@
 
 ## 代码与版本
 
-- [x] P0/P1 修复与回归覆盖已提交；本机 `python -m pytest -q` 通过（当前 418 passed / 2 skipped）。
-- [x] 已推送到 `origin/codex/prepare-v0.3.0`；[GitHub Actions run 44031595227](https://github.com/yuyanhao/qqrobot/actions/runs/44031595227) 成功，Python 3.12、3.14 两个矩阵均通过。
+- [ ] 本次 PDF 严格选页/单份与单任务最多 5 页的修订已补代码和回归测试；等待当前提交的 Linux CI 验证。
+- [x] 之前的 `origin/codex/prepare-v0.3.0` head `7825c5b` 通过 [GitHub Actions run 44032883516](https://github.com/yuyanhao/qqrobot/actions/runs/44032883516)，Python 3.12、3.14 两个矩阵均通过；该 run 不包含本次 PDF 修订。
 - [x] `LICENSE`（MIT，yuyanhao）、安全政策、贡献说明和用户文档已核对。
 - [x] 复核本版本 `CHANGELOG.md` 顶部段落；`VERSION`、README 发布链接及 Docker/更新命令一致。
 - [x] `python tools/check_release.py`、`ruff check .`、`python settings.py --allow-missing-credentials` 通过；发布工作流只提取当前版本说明。
-- [x] 核对 `PDF_INPUT_MAX_PAGES` / `PDF_TASK_MAX_PAGES` 与 `BOOK_MAX_PDF_MB` / `BOOK_LIBRARY_MAX_MB` 的默认值或部署覆盖值。
+- [ ] 确认 `PDF_INPUT_MAX_PAGES` / `PDF_TASK_MAX_PAGES` 默认值均为 5、配置不能超过 5；核对书库配额及部署覆盖值。
 - [x] 代码审查通过；无真实密钥、测试用户数据或生成目录进入提交。
 
 ## 仓库设置

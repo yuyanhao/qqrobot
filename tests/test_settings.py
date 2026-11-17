@@ -62,6 +62,14 @@ def test_pdf_and_book_resource_limits_are_validated(monkeypatch):
         monkeypatch.delenv(name)
 
 
+def test_pdf_page_limits_cannot_be_configured_above_five(monkeypatch):
+    for name in ("PDF_INPUT_MAX_PAGES", "PDF_TASK_MAX_PAGES"):
+        monkeypatch.setenv(name, "6")
+        with pytest.raises(ValueError, match=name):
+            validate_environment(require_credentials=False)
+        monkeypatch.delenv(name)
+
+
 def test_unverified_official_vision_model_warns_without_blocking(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
     monkeypatch.setenv("VISION_MODEL", "deepseek-v4-pro")
