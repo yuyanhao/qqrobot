@@ -53,11 +53,20 @@ def test_budget_and_obsolete_settings_produce_actionable_notices(monkeypatch):
     assert "BOCHA_API_KEY" in warnings and "synthetic-private-secret" not in warnings
 
 
-def test_official_vision_model_must_support_images(monkeypatch):
+def test_pdf_and_book_resource_limits_are_validated(monkeypatch):
+    for name in ("PDF_INPUT_MAX_PAGES", "PDF_TASK_MAX_PAGES",
+                 "BOOK_MAX_PDF_MB", "BOOK_LIBRARY_MAX_MB"):
+        monkeypatch.setenv(name, "0")
+        with pytest.raises(ValueError, match=name):
+            validate_environment(require_credentials=False)
+        monkeypatch.delenv(name)
+
+
+def test_unverified_official_vision_model_warns_without_blocking(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
     monkeypatch.setenv("VISION_MODEL", "deepseek-v4-pro")
-    with pytest.raises(ValueError, match="VISION_MODEL"):
-        validate_environment(require_credentials=False)
+    warnings = validate_environment(require_credentials=False)
+    assert any("VISION_MODEL" in warning and "支持图片" in warning for warning in warnings)
 
 
 def test_effort_normalizes_before_selecting_token_budget(monkeypatch):

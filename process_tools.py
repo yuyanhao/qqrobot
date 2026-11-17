@@ -10,9 +10,11 @@ import sys
 
 def worker_environment(workdir: Path) -> dict[str, str]:
     environment = {k: os.environ[k] for k in
-                   ("PATH", "SystemRoot", "WINDIR", "LANG", "LC_ALL") if k in os.environ}
+                   ("PATH", "SystemRoot", "WINDIR", "LANG", "LC_ALL", "PDF_INPUT_MAX_PAGES")
+                   if k in os.environ}
     environment.update(PYTHONIOENCODING="utf-8", PYTHONNOUSERSITE="1",
                        TMP=str(workdir), TEMP=str(workdir), TMPDIR=str(workdir),
+                       HOME=str(workdir), XDG_CACHE_HOME=str(workdir / ".cache"),
                        MPLCONFIGDIR=str(workdir / ".mplcache"),
                        OPENBLAS_NUM_THREADS="1", OMP_NUM_THREADS="1",
                        openin_any="p", openout_any="p")

@@ -9,7 +9,7 @@ import sys
 from process_tools import set_worker_limits
 set_worker_limits()
 
-from pdf_tools import PDFIUM_LOCK, render_pdf_batch, render_pdf_pages
+from pdf_tools import render_pdf_batch, render_pdf_pages
 from render import RenderError, build_favorites_tex, build_tex
 
 
@@ -61,7 +61,7 @@ def main():
         images, total, numbers, selected, selection_count = render_pdf_batch(
             Path("input.pdf"), request.get("text", ""), request.get("max_pages", 0),
             request.get("dpi", 160), request.get("offset", 0), request.get("count", 4),
-            book=request.get("book", False))
+            book=request.get("book", False), auto_pages=request.get("auto_pages", 0))
         result = {"total_pages": total, "page_numbers": numbers, "selected": selected,
                   "selection_count": selection_count}
     else:

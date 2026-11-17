@@ -76,15 +76,15 @@ def test_collection_stores_each_pdf_selection_separately(tmp_path, monkeypatch):
 
     async def scenario():
         ctx = context()
-        await bot._create_collection(ctx, "", "", [])
-        tid = bot.store.collecting(ctx.owner)["task_id"]
         attachment = {"url": "https://example.com/book.pdf", "name": "book.pdf"}
-        for page in ("第3页", "第5页"):
+        await bot._create_collection(ctx, "只读第3-5页", "", [attachment])
+        tid = bot.store.collecting(ctx.owner)["task_id"]
+        for page in ("第3页", "只读第5页，解答例2"):
             ctx.message_id = page
             await bot._dispatch_command(ctx, f"/补图 {tid} {page}", "", [attachment])
         request = bot.store.get(tid)["request"]
-        assert [item.get("pdf_selection") for item in request["attachments"]] == ["第3页", "第5页"]
-        assert request["text"] == ""
+        assert [item.get("pdf_selection") for item in request["attachments"]] == ["第3-5页", "第3页", "第5页"]
+        assert request["text"] == "解答例2"
 
     try:
         asyncio.run(scenario())
@@ -98,7 +98,7 @@ def test_collection_stores_each_pdf_selection_separately(tmp_path, monkeypatch):
     ("c2c", "", False, True, False),
     ("c2c", "只读第2页", False, True, True),
     ("c2c", "只读第2页", True, True, True),
-    ("group", "", True, False, True),
+    ("group", "只读第2页", True, False, True),
 ])
 def test_private_pdf_starts_only_after_user_quotes_it_with_instructions(
         tmp_path, monkeypatch, kind, text, current, quoted_pdf, starts_task):
@@ -122,6 +122,86 @@ def test_private_pdf_starts_only_after_user_quotes_it_with_instructions(
         bot.store.close()
 
 
+def test_group_pdf_without_page_selection_is_rejected_before_registration(tmp_path):
+    bot = make_bot(tmp_path)
+    pdf = {"url": "https://example.com/input.pdf", "content_type": "application/pdf", "name": "input.pdf"}
+    message = SimpleNamespace(id="group-pdf", content="", attachments=[pdf])
+    try:
+        asyncio.run(bot._handle(message, "group", "g", "group:g:reader"))
+        assert bot.queue.empty() and not bot.store.list_recent("group:g:reader")
+        assert any("页码" in item[1] for item in bot.media.sent if item[0] == "text")
+    finally:
+        bot.store.close()
+
+
+def test_pdf_page_budget_is_checked_before_registration(tmp_path):
+    bot = make_bot(tmp_path)
+    pdfs = [{"url": f"https://example.com/{index}.pdf", "name": f"{index}.pdf"}
+            for index in range(5)]
+    try:
+        asyncio.run(bot._submit(context(), {"text": "第1-5页", "attachments": pdfs}))
+        assert bot.queue.empty() and not bot.store.list_recent("u")
+        assert any("超过上限" in item[1] for item in bot.media.sent if item[0] == "text")
+
+        asyncio.run(bot._submit(context(), {
+            "text": "解释一下", "parent_id": "Q261116-000001",
+            "attachments": [pdfs[0]]}))
+        assert bot.queue.qsize() == 1
+        task = bot.store.get(bot.queue.get_nowait())
+        assert task["request"]["attachments"] == [pdfs[0]]
+    finally:
+        bot.store.close()
+
+
+def test_secondary_pdf_estimate_and_budget():
+    from task_queue import TaskQueue
+
+    book = {"book_id": "B0001", "name": "book.pdf", "pdf_selection": "第3-5页"}
+    draft = {"url": "https://example.com/draft.pdf", "name": "draft.pdf"}
+    assert TaskQueue._pdf_page_budget({
+        "secondary_pdf_auto": True, "attachments": [book, draft]}) == 8
+    assert TaskQueue._estimated_ocr_batches({"parent_id": "Q261116-000001",
+                                             "attachments": [draft]}) == 2
+
+
+def test_ambiguous_book_attachment_detection(tmp_path):
+    bot = make_bot(tmp_path)
+    assert bot._is_ambiguous_book_attachment(
+        {"name": "book", "content_type": "", "url": "https://example.com/download"})
+    assert not bot._is_ambiguous_book_attachment(
+        {"name": "book.pdf", "content_type": "", "url": "https://example.com/download"})
+    assert not bot._is_ambiguous_book_attachment(
+        {"name": "photo", "content_type": "image/png", "url": "https://example.com/download"})
+    bot.store.close()
+
+
+def test_admin_image_is_not_swallowed_by_book_staging(tmp_path):
+    bot = make_bot(tmp_path)
+    bot.book_admin_openid = "admin"
+    image = {"url": "https://example.com/question.png", "name": "question.png", "content_type": "image/png"}
+    message = SimpleNamespace(id="admin-image", content="", attachments=[image])
+    try:
+        asyncio.run(bot._handle(message, "c2c", "admin", "c2c:admin"))
+        assert bot.queue.qsize() == 1
+        task = bot.store.get(bot.queue.get_nowait())
+        assert task["request"]["attachments"] == [image]
+    finally:
+        bot.store.close()
+
+
+def test_check_draft_pdf_uses_automatic_first_pages(tmp_path):
+    bot = make_bot(tmp_path)
+    question = {"url": "https://example.com/question.png", "name": "question.png"}
+    draft = {"url": "https://example.com/draft.pdf", "name": "draft.pdf"}
+    try:
+        asyncio.run(bot._dispatch_command(context(), "/查错", "", [question, draft]))
+        task = bot.store.get(bot.queue.get_nowait())
+        assert task["request"]["question_attachments"] == [question]
+        assert task["request"]["attachments"] == [draft]
+    finally:
+        bot.store.close()
+
+
 def test_check_two_images_treats_first_as_question_and_second_as_draft(tmp_path):
     bot = make_bot(tmp_path)
     attachments = [{"url": f"https://example.com/{name}.png", "name": name} for name in ("question", "draft")]
@@ -135,13 +215,15 @@ def test_check_two_images_treats_first_as_question_and_second_as_draft(tmp_path)
         bot.store.close()
 
 
-@pytest.mark.parametrize("selection", ["第3页 ", "只读第3页，"])
-def test_check_keeps_pdf_page_selection_separate_from_draft(tmp_path, selection):
+@pytest.mark.parametrize("selection,quoted", [("第3页 ", False), ("只读第3页，", True)])
+def test_check_keeps_pdf_page_selection_separate_from_draft(tmp_path, selection, quoted):
     bot = make_bot(tmp_path)
     attachment = {"url": "https://example.com/problem.pdf", "name": "problem.pdf"}
     draft = "我令 t=x，并令 Ａ=1。"
     try:
-        asyncio.run(bot._dispatch_command(context(), "/查错 " + selection + draft, "", [attachment]))
+        urls = {attachment["url"]} if quoted else ()
+        asyncio.run(bot._dispatch_command(context(), "/查错 " + selection + draft,
+                                          "引用题面" if quoted else "", [attachment], quoted_urls=urls))
         assert not bot.queue.empty()
         request = bot.store.get(bot.queue.get_nowait())["request"]
         assert request["question_attachments"] == [{**attachment, "pdf_selection": "第3页"}]
@@ -229,7 +311,7 @@ def test_managing_book_from_cloud_cli_uses_same_catalog(tmp_path):
     from pdf_tools import render_pdf_batch
 
     source = tmp_path / "book.pdf"
-    make_large_pdf(source, 101)
+    make_large_pdf(source, 11)
     script = Path(__file__).resolve().parents[1] / "book_library.py"
     cli = [sys.executable, str(script), "--data-dir", str(tmp_path)]
 
@@ -239,11 +321,46 @@ def test_managing_book_from_cloud_cli_uses_same_catalog(tmp_path):
     assert "B0001" in run("add", str(source), "Real Analysis", "--summary", "Limits")
     assert "Real Analysis" in run("list")
     stored = BookLibrary(tmp_path).path("B0001")
-    assert stored.stat().st_size == source.stat().st_size > 100 * 1024**2
+    assert stored.stat().st_size == source.stat().st_size > 10 * 1024**2
     images, total, pages, selected, count = render_pdf_batch(stored, "第2页", book=True)
     assert (len(images), total, pages, selected, count) == (1, 2, [2], True, 1)
     assert "B0001" in run("remove", "B0001")
     assert not run("list")
+
+
+def test_book_rejects_pdf_above_the_configured_size_limit(tmp_path, monkeypatch):
+    import book_library
+    from book_library import BookLibrary
+    from pdf_tools import PDFError
+
+    source = tmp_path / "oversized.pdf"
+    make_large_pdf(source, 2)
+    monkeypatch.setattr(book_library, "MAX_BOOK_PDF_MB", 1)
+    library = BookLibrary(tmp_path)
+    with library.staged_pdf() as staged:
+        shutil.copyfile(source, staged)
+        with pytest.raises(PDFError, match="不能超过"):
+            library.add(staged, "Oversized")
+    assert not library.list(-1)
+
+
+def test_book_rejects_library_above_the_configured_quota(tmp_path, monkeypatch):
+    import book_library
+    from book_library import BookLibrary
+    from pdf_tools import PDFError
+
+    source = tmp_path / "book.pdf"
+    make_large_pdf(source, 2)
+    monkeypatch.setattr(book_library, "MAX_BOOK_LIBRARY_MB", 3)
+    library = BookLibrary(tmp_path)
+    with library.staged_pdf() as staged:
+        shutil.copyfile(source, staged)
+        library.add(staged, "First")
+    with library.staged_pdf() as staged:
+        shutil.copyfile(source, staged)
+        with pytest.raises(PDFError, match="总容量"):
+            library.add(staged, "Second")
+    assert [book["title"] for book in library.list(-1)] == ["First"]
 
 
 def test_invalid_model_tex_still_creates_readable_pdf(tmp_path):
@@ -286,7 +403,7 @@ def test_admin_private_book_import_can_be_referenced_in_any_group(tmp_path, monk
 
     async def download(url, *, max_mb, timeout, output=None):
         reads.append(url)
-        assert max_mb is None and timeout is None
+        assert 1 <= max_mb <= 100 and timeout == 30 * 60
         with source.open("rb") as file:
             shutil.copyfileobj(file, output)
 

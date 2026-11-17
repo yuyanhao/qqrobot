@@ -6,22 +6,27 @@ from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import re
+import shutil
 import sqlite3
 import tempfile
 import time
+from urllib.parse import urlparse
 
 from aiohttp import ClientError
 
-from book_library import BOOK_ID, BookLibrary
+from book_library import (BOOK_ID, BOOK_UPLOAD_DISK_RESERVE_MB, MAX_BOOK_LIBRARY_MB,
+                          MAX_BOOK_PDF_MB, BookLibrary)
 from file_tools import DownloadError, download_file
 from message_input import _is_pdf
-from pdf_tools import MAX_INPUT_PDF_MB, PDFError, split_pdf_selection
+from pdf_tools import (MAX_INPUT_PAGES, MAX_INPUT_PDF_MB, PDFError,
+                       SECONDARY_INPUT_PAGES, split_pdf_selection)
 from solver import solution_text, study_problem
 from task_store import ACTIVE, STATES, TASK_RE, confirmation_key, describe
 
 QUESTION_REFERENCE = re.compile(r"#?(" + TASK_RE + r")(?:\s+([\s\S]+))?", re.I)
 FAVORITES_PER_PAGE = 8
 PENDING_BOOK_UPLOAD_TTL_SECONDS = 15 * 60
+BOOK_UPLOAD_TIMEOUT_SECONDS = 30 * 60
 TASK_ARGUMENTS = {
     "进度": "", "结果": "", "图片": " [起始页]", "取消": "", "重试": "",
     "追问": " 具体问题", "补充": " 补充条件", "补图": "（同条附图）", "开始": "", "PDF": "",
@@ -43,7 +48,8 @@ PICKER_STATES = {
 
 HELP = ("直接发送数学物理题的文字或图片即可获得题号。\n"
         f"普通 PDF 每份最多 {MAX_INPUT_PDF_MB} MB。群聊可附 PDF 直接发题，私聊请引用 PDF 并写明要求。\n"
-        "可写“只读第3-5页”或“第2、5、8-10页”指定页码（从 1 开始），默认读取全部页。\n"
+        f"可写“只读第3-5页”或“第2、5、8-10页”指定页码（从 1 开始）；每份 PDF 每次必须指定 1–{MAX_INPUT_PAGES} 页。\n"
+        f"草稿、补充/追问等非题目 PDF 未写页码时，自动读取前 {SECONDARY_INPUT_PAGES} 页。\n"
         "完成后：1–3 页发全部图片，超过 3 页发完整 PDF。\n"
         "群聊每条操作都需 @ 机器人；请用提交原题的账号在原会话操作。\n\n"
         "题号 或 /结果 题号：查询状态，完成后领取结果；无 PDF 时可分段领取文字稿\n"
@@ -61,6 +67,7 @@ HELP = ("直接发送数学物理题的文字或图片即可获得题号。\n"
         "/错题本：按收藏时间生成当前会话的全部收藏 PDF\n"
         "/书库：查看共享书籍；/引用 B0001 第3-5页 [要求]：用指定书页解题；写明第几题时只识别该题及其小问\n"
         "管理员私聊：先发送 PDF，确认暂存成功后 15 分钟内发送 /入库 书名；无需引用或重发\n"
+        f"管理员书库 PDF 每份默认最多 {MAX_BOOK_PDF_MB} MB，书库总量默认最多 {MAX_BOOK_LIBRARY_MB} MB（可配置）\n"
         "/补充 题号 补充条件：可用文字或同条附图补充条件\n"
         "/收集 [说明或原题号]：先收齐多张题图，暂不解题\n"
         "/补图 收集题号 [PDF页码]：同条附图或 PDF，分批追加材料\n"
@@ -100,18 +107,22 @@ class TaskCommands:
 
     async def _stage_book_upload(self, context, attachments):
         if context.kind != "c2c" or context.target != getattr(self, "book_admin_openid", ""):
-            return
+            return False
         pdfs = [item for item in attachments if _is_pdf(item)]
         if len(pdfs) > 1:
             await self._text(context, "一次只能暂存一份 PDF，请只发送一本书的文件。")
-            return
+            return True
         if pdfs:
+            if len(attachments) > 1:
+                await self._text(context, "暂存书库 PDF 时请只发送这一份文件；其他图片或材料请分开提交。")
+                return True
             attachment = pdfs[0]
         elif len(attachments) == 1:
             attachment = attachments[0]
+            if not self._is_ambiguous_book_attachment(attachment):
+                return False
         else:
-            await self._text(context, "请一次只发送一份 PDF 作为待入库书籍。")
-            return
+            return False
 
         url = attachment.get("url", "")
         if url.startswith("//"):
@@ -120,7 +131,7 @@ class TaskCommands:
             url = "https://" + url
         if not url:
             await self._text(context, "QQ 没有提供这份文件的下载地址，请等文件上传完成后再发送一次。")
-            return
+            return True
 
         staged = None
         try:
@@ -129,12 +140,12 @@ class TaskCommands:
                     prefix=".book-upload-", suffix=".pdf", dir=self.store.root, delete=False
                 ) as output:
                     staged = Path(output.name)
-                    await download_file(url, max_mb=None, timeout=None, output=output)
+                    await download_file(url, max_mb=self._book_upload_limit_mb(),
+                                        timeout=BOOK_UPLOAD_TIMEOUT_SECONDS, output=output)
                 with staged.open("rb") as uploaded:
                     if b"%PDF-" not in uploaded.read(1024):
                         staged.unlink(missing_ok=True)
-                        await self._text(context, "这不是 PDF 文件，书库只接受 PDF。")
-                        return
+                        return False
                 previous = self.pending_book_uploads.get(context.target)
                 self.pending_book_uploads[context.target] = (time.monotonic(), staged)
                 self._schedule_pending_book_upload_expiry(
@@ -148,13 +159,41 @@ class TaskCommands:
                 with suppress(OSError):
                     staged.unlink(missing_ok=True)
             await self._text(context, "PDF 暂存失败，请稍后重发一次文件；还没有进行入库。")
-            return
+            return True
         except BaseException:
             if staged:
                 with suppress(OSError):
                     staged.unlink(missing_ok=True)
             raise
         await self._text(context, "已收到并暂存这份 PDF（15 分钟有效）。请接着发送 /入库 书名，可加 | 简介；无需引用或再次发送文件。")
+        return True
+
+    @staticmethod
+    def _is_ambiguous_book_attachment(attachment):
+        content_type = str(attachment.get("content_type") or "").lower().strip()
+        name = str(attachment.get("name") or "").strip()
+        url_path = urlparse(str(attachment.get("url") or "")).path
+        if content_type.startswith(("image/", "text/")):
+            return False
+        known_suffixes = {
+            ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff",
+            ".txt", ".md", ".markdown", ".tex",
+        }
+        suffixes = {Path(value).suffix.lower() for value in (name, url_path) if value}
+        if any(suffix in known_suffixes for suffix in suffixes):
+            return False
+        return content_type in ("", "application/octet-stream", "binary/octet-stream", "application/x-download")
+
+    def _book_upload_limit_mb(self):
+        free_mb = shutil.disk_usage(self.store.root).free // 1024**2
+        library = BookLibrary(self.store.root)
+        remaining_library_mb = (MAX_BOOK_LIBRARY_MB * 1024**2 - library.stored_bytes()) // 1024**2
+        max_mb = min(MAX_BOOK_PDF_MB, remaining_library_mb, free_mb - BOOK_UPLOAD_DISK_RESERVE_MB)
+        if max_mb < 1:
+            raise DownloadError(
+                f"书库容量已满或磁盘可用空间不足；每份 PDF 最多 {MAX_BOOK_PDF_MB} MB，"
+                f"书库总量最多 {MAX_BOOK_LIBRARY_MB} MB，磁盘需保留 {BOOK_UPLOAD_DISK_RESERVE_MB} MB。")
+        return int(max_mb)
 
     async def _dispatch_command(self, context, text, quoted, attachments, *, quoted_urls=()):
         if text in ("/帮助", "帮助", "/help", "你好", "您好"):
@@ -426,12 +465,13 @@ class TaskCommands:
             if any(_is_pdf(item) for item in questions):
                 try:
                     selection, request["text"] = split_pdf_selection(args)
+                    if not selection:
+                        raise PDFError(f"使用 PDF 作题面时请明确指定页码；每份 PDF 每次最多读取 {MAX_INPUT_PAGES} 页，例如“/查错 第3页 我令 t=x”。")
                 except PDFError as exc:
                     await self._text(context, str(exc))
                     return
-                if selection:
-                    questions = [{**item, "pdf_selection": selection} if _is_pdf(item) else item
-                                 for item in questions]
+                questions = [{**item, "pdf_selection": selection} if _is_pdf(item) else item
+                             for item in questions]
             request.update(question_attachments=questions, attachments=draft)
         else:
             await self._text(context, "用法：/查错 题号 草稿；也可同条附题目图和草稿图（第一张是题目）。")
@@ -455,8 +495,9 @@ class TaskCommands:
                     await self._text(context, "书库管理仅对已配置的管理员私聊开放。")
                     return
                 if action == "移除书籍":
-                    book = library.remove(args)
-                    self._cleanup_retired_books()
+                    async with self.book_import_lock:
+                        book = library.remove(args)
+                        self._cleanup_retired_books()
                     await self._text(context, f"已移除 {book['id']} 《{book['title']}》。"
                                               "已登记且仍需此书的任务可以继续读取。")
                     return
@@ -466,6 +507,9 @@ class TaskCommands:
                 pdfs = [item for item in attachments if _is_pdf(item)]
                 if len(pdfs) > 1:
                     await self._text(context, "检测到多份 PDF，请在同一条消息中只附一份 PDF。")
+                    return
+                if pdfs and len(attachments) > 1:
+                    await self._text(context, "入库时请只附这一份 PDF；其他材料请分开提交。")
                     return
                 if pdfs:
                     attachment = pdfs[0]
@@ -510,7 +554,8 @@ class TaskCommands:
                             url = "https://" + url
                         with library.staged_pdf() as staged:
                             with staged.open("xb") as output:
-                                await download_file(url, max_mb=None, timeout=None, output=output)
+                                await download_file(url, max_mb=self._book_upload_limit_mb(),
+                                                    timeout=BOOK_UPLOAD_TIMEOUT_SECONDS, output=output)
                             registration = asyncio.create_task(
                                 asyncio.to_thread(library.add, staged, title, summary)
                             )
@@ -532,11 +577,15 @@ class TaskCommands:
                 if len(attachments) >= 4:
                     await self._text(context, "引用书籍时，还可同条附最多 3 个材料。")
                     return
-                await self._submit(context, {"text": "", "extra": tail, "quoted": "",
-                                            "attachments": [item, *attachments]})
+                request = {"text": "", "extra": tail, "quoted": "",
+                           "attachments": [item, *attachments]}
+                if any(_is_pdf(extra) for extra in attachments):
+                    # Extra PDFs are supporting material, not the question itself.
+                    request["secondary_pdf_auto"] = True
+                await self._submit(context, request)
                 return
             if action == "引用" and re.fullmatch(BOOK_ID, args, re.I):
-                book = library.get_public(args)
+                book = library.get_by_display_id(args)
                 await self._text(context, f"《{book['title']}》共 {book['pages']} 页。"
                                           f"请发送 /引用 {book['id']} 第3页 [解题要求]，页码从文件第一页数起。")
                 return

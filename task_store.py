@@ -35,6 +35,7 @@ class TaskStore:
         self.results = self.root / "results"
         self.results.mkdir(exist_ok=True)
         self._retained_results = Counter()
+        self._disk_bytes_cache = (0.0, 0.0)
         self.db = sqlite3.connect(self.root / "tasks.sqlite3")
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
@@ -51,6 +52,9 @@ class TaskStore:
             columns = {row["name"] for row in self.db.execute("PRAGMA table_info(tasks)")}
             if "question_ocr" not in columns:
                 self.db.execute("ALTER TABLE tasks ADD COLUMN question_ocr TEXT NOT NULL DEFAULT '{}'")
+            self.db.execute("CREATE INDEX IF NOT EXISTS tasks_owner_state ON tasks(owner, state)")
+            self.db.execute("CREATE INDEX IF NOT EXISTS tasks_owner_created ON tasks(owner, created)")
+            self.db.execute("CREATE INDEX IF NOT EXISTS tasks_state_created ON tasks(state, created)")
             self.db.execute("""CREATE TABLE IF NOT EXISTS reusable_tasks (
                 owner TEXT NOT NULL, reuse_key TEXT NOT NULL, task_id TEXT NOT NULL UNIQUE,
                 PRIMARY KEY(owner,reuse_key))""")
@@ -63,6 +67,7 @@ class TaskStore:
             columns = {row["name"] for row in self.db.execute("PRAGMA table_info(favorites)")}
             if "question_ocr" not in columns:
                 self.db.execute("ALTER TABLE favorites ADD COLUMN question_ocr TEXT NOT NULL DEFAULT '{}'")
+            self.db.execute("CREATE INDEX IF NOT EXISTS favorites_owner_saved ON favorites(owner, saved)")
             self._restore_confirmation_links()
 
     def _restore_confirmation_links(self):
@@ -419,9 +424,19 @@ class TaskStore:
             with self.db:
                 self.db.execute("DELETE FROM reusable_tasks WHERE task_id=?", (tid,))
                 self.db.execute("DELETE FROM tasks WHERE task_id=?", (tid,))
+        self.invalidate_disk_bytes()
 
     def disk_bytes(self):
-        return sum(p.stat().st_size for p in self.results.rglob("*") if p.is_file())
+        """Return result bytes, cached briefly because callers issue bursts of checks."""
+        now = time.monotonic()
+        if now - self._disk_bytes_cache[0] < 2.0:
+            return self._disk_bytes_cache[1]
+        total = sum(p.stat().st_size for p in self.results.rglob("*") if p.is_file())
+        self._disk_bytes_cache = (now, total)
+        return total
+
+    def invalidate_disk_bytes(self):
+        self._disk_bytes_cache = (0.0, 0.0)
 
 
 STATES = {"collecting": "收集中", "queued": "排队中", "reading": "读取题目", "planning": "确认题意", "searching": "检索资料",

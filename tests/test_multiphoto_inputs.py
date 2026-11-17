@@ -9,7 +9,7 @@ from PIL import Image
 import pytest
 
 from file_tools import DownloadError, DownloadedFile
-from solver import InputError, Solver
+from solver import InputError, Solver, normalize_image
 from task_bot import RAW_EVENTS, TaskBot
 from task_store import TaskStore
 
@@ -22,6 +22,17 @@ def png(number):
 
 def image_attachment(number):
     return {"url": f"https://example.com/page-{number}.png", "content_type": "image/png", "name": f"page-{number}.png"}
+
+
+def test_normalize_image_uses_jpeg_only_for_jpeg_sources():
+    png_data, png_mime = normalize_image(png(1))
+    assert png_mime == "image/png"
+    assert Image.open(io.BytesIO(png_data)).format == "PNG"
+    buffer = io.BytesIO()
+    Image.new("RGB", (16, 16), (20, 40, 60)).save(buffer, format="JPEG")
+    jpeg_data, jpeg_mime = normalize_image(buffer.getvalue())
+    assert jpeg_mime == "image/jpeg"
+    assert Image.open(io.BytesIO(jpeg_data)).format == "JPEG"
 
 
 class Recognizer:
@@ -162,8 +173,8 @@ def test_followup_pdf_pages_reach_recognition_and_keep_page_notes(tmp_path, monk
                 downloads.append(url)
                 return DownloadedFile(b"synthetic PDF", "conditions.pdf", "application/pdf", url)
 
-            async def render(data, directory, text, max_pages=0):
-                renders.append((data, text, max_pages))
+            async def render(data, directory, text, max_pages=0, auto_pages=0):
+                renders.append((data, text, max_pages, auto_pages))
                 yield [png(3), png(4)], 6, [3, 4], True
 
             monkeypatch.setattr("solver.download_file", download)

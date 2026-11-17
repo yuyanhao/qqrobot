@@ -43,7 +43,8 @@ def test_picker_fills_only_the_latest_three_eligible_task_ids_for_this_member_an
         asyncio.run(dispatch(bot, "／ pdf"))
         assert len(calls) == 1
         path, payload = calls[0]
-        assert path == "/v2/groups/g/messages" and payload["msg_type"] == 0
+        assert path == "/v2/groups/g/messages" and payload["msg_type"] == 2
+        assert "markdown" in payload and "不应回显的题干" not in payload["markdown"]["content"]
         assert payload["msg_id"] == "message" and payload["msg_seq"] == 1
         buttons = [row["buttons"][0] for row in payload["keyboard"]["content"]["rows"]]
         assert [button["action"]["data"] for button in buttons] == [f"/PDF {tid}" for tid in reversed(ids)]

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
-import logging
 import re
 import socket
 from dataclasses import dataclass
@@ -14,8 +13,6 @@ from typing import BinaryIO
 from urllib.parse import unquote, urljoin, urlparse
 
 import aiohttp
-
-log = logging.getLogger("qq-deepseek-bot.file")
 
 _EXT_BY_TYPE = {
     "application/pdf": ".pdf",

@@ -8,9 +8,7 @@ import json
 import logging
 import os
 import re
-import inspect
-import time
-from typing import Any
+import string
 
 from openai import AsyncOpenAI
 from skill_loader import load_solver_instructions
@@ -164,11 +162,13 @@ class AIError(RuntimeError):
 
 
 def repair_json_escapes(text: str) -> str:
-    """按 LaTeX 规则重写 JSON 字符串里的反斜杠。
+    """Repair LaTeX backslashes in a JSON string without doubling valid pairs.
 
-    模型经常把 LaTeX 写成 \\frac、\\(，这在 JSON 里是非法/会误解的转义。
-    这里把字符串内的反斜杠统一当成字面量：\\frac -> \\\\frac，\\\\( -> \\\\\\\\(。
-    只保留转义引号 \\"；\\\\ 统一按两个反斜杠保留。
+    Models often emit ``\\frac`` or ``\\(`` (an invalid JSON escape). Valid
+    JSON escapes such as ``\\\\`` (a literal backslash) must be preserved so
+    matrix row separators are not inflated when another escape needs repair.
+    A simple escape followed by a letter is treated as a LaTeX command; a
+    simple escape followed by non-letter content keeps its JSON meaning.
     """
     out: list[str] = []
     in_string = False
@@ -181,25 +181,47 @@ def repair_json_escapes(text: str) -> str:
             out.append(char)
             i += 1
             continue
-        if char == "\\" and in_string:
-            if i + 1 >= length:
-                out.append("\\\\")
-                i += 1
-                continue
-            nxt = text[i + 1]
-            if nxt == '"':
-                out.append('\\"')
-                i += 2
-                continue
-            if nxt == "\\":
-                out.append("\\\\\\\\")
-                i += 2
-                continue
-            out.append("\\\\" + nxt)
+        if char != "\\" or not in_string:
+            out.append(char)
+            i += 1
+            continue
+        if i + 1 >= length:
+            out.append("\\\\")
+            i += 1
+            continue
+        nxt = text[i + 1]
+        if nxt == '"':
+            out.append('\\"')
             i += 2
             continue
-        out.append(char)
-        i += 1
+        if nxt == "\\":
+            # A valid pair encodes one literal backslash; keep both characters.
+            out.append("\\\\")
+            i += 2
+            continue
+        if nxt in "bfnrt":
+            following = text[i + 2] if i + 2 < length else ""
+            if following.isalpha():
+                out.append("\\\\" + nxt)
+            else:
+                out.append("\\" + nxt)
+            i += 2
+            continue
+        if nxt == "u":
+            hexpart = text[i + 2:i + 6]
+            if len(hexpart) == 4 and all(digit in string.hexdigits for digit in hexpart):
+                out.append("\\u" + hexpart)
+                i += 6
+            else:
+                out.append("\\\\u")
+                i += 2
+            continue
+        if nxt == "/":
+            out.append("\\/")
+            i += 2
+            continue
+        out.append("\\\\" + nxt)
+        i += 2
     return "".join(out)
 
 
@@ -475,7 +497,7 @@ class DeepSeek:
                                  {"role": "user", "content": problem + "\n" + extra}],
                                 stage="题意判断", validator=validate, timeout=timeout, max_tokens=800)
 
-    async def transcribe(self, images, user_text, timeout=120, *, draft=False, question_target=""):
+    async def transcribe(self, images, user_text, timeout=120, *, draft=False, question_target="", max_tokens=8000):
         if draft:
             prompt = DRAFT_VISION_PROMPT
         elif question_target:
@@ -499,7 +521,7 @@ class DeepSeek:
         return await self._json([{"role": "system", "content": prompt},
                                  {"role": "user", "content": content}], stage="识别草稿" if draft else "识题",
                                 validator=validate,
-                                timeout=timeout, max_tokens=8000, model=self.vision_model)
+                                timeout=timeout, max_tokens=max_tokens, model=self.vision_model)
 
     async def study(self, action, problem, material, *, previous_hints=(), timeout=120):
         checking = action == "查错"

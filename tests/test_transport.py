@@ -1,7 +1,6 @@
 import asyncio
 import base64
 import hashlib
-from pathlib import Path
 import time
 
 from qqmedia import QQMedia

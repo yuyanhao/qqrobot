@@ -6,8 +6,6 @@ from datetime import datetime, timedelta, timezone
 import io
 import json
 import logging
-from pathlib import Path
-import time
 
 from PIL import Image, ImageOps
 from ai import AIError, normalize_solution
@@ -15,7 +13,7 @@ from book_library import BookLibrary
 from file_tools import DownloadError, download_file
 from input_cache import InputCacheError, attachment_limit, read_cached_attachment
 from message_input import _is_pdf, _is_text_file, _decode_text
-from pdf_tools import PDFError
+from pdf_tools import MAX_INPUT_PAGES, SECONDARY_INPUT_PAGES, PDFError
 from render import RenderError, display_problem_text
 from render_service import render_artifacts_async, render_input_pdf_batches_async
 from search_tools import deepseek_search
@@ -30,8 +28,9 @@ class InputError(ValueError):
     pass
 
 
-def normalize_image(data: bytes) -> bytes:
+def normalize_image(data: bytes) -> tuple[bytes, str]:
     with Image.open(io.BytesIO(data)) as source:
+        source_format = (source.format or "").upper()
         width, height = source.size
         if width * height > 12_000_000 or max(width, height) > 12000:
             raise InputError("图片像素过大，请裁剪到题目区域再发送")
@@ -41,14 +40,19 @@ def normalize_image(data: bytes) -> bytes:
             rgb = image.convert("RGB")
             try:
                 buffer = io.BytesIO()
-                rgb.save(buffer, format="PNG")
+                if source_format in ("JPEG", "JPG", "MPO"):
+                    rgb.save(buffer, format="JPEG", quality=90, optimize=True)
+                    mime = "image/jpeg"
+                else:
+                    rgb.save(buffer, format="PNG", optimize=True)
+                    mime = "image/png"
                 output = buffer.getvalue()
             finally:
                 rgb.close()
         finally:
             if image is not source: image.close()
     if len(output) > 8 * 1024**2: raise InputError("题目图片过大，请缩小或裁剪")
-    return output
+    return output, mime
 
 
 def solution_text(doc, *, include_problem=True):
@@ -79,6 +83,37 @@ def merge_question_ocr(inherited, current):
     }
 
 
+def followup_solution_summary(solution):
+    if not isinstance(solution, dict):
+        return ""
+    raw_steps = solution.get("steps", [])
+    if not isinstance(raw_steps, list):
+        raw_steps = []
+    selected = list(range(min(8, len(raw_steps))))
+    selected.extend(index for index in range(max(8, len(raw_steps) - 2), len(raw_steps))
+                    if index not in selected)
+    steps = []
+    for index in selected:
+        step = raw_steps[index]
+        if not isinstance(step, dict):
+            continue
+        steps.append({
+            "step": index + 1,
+            "text": str(step.get("text", ""))[:400],
+            "math": str(step.get("math", ""))[:1000],
+        })
+    summary = {
+        "title": str(solution.get("title", ""))[:160],
+        "status": str(solution.get("status", ""))[:32],
+        "steps": steps,
+        "answer_latex": str(solution.get("answer_latex", ""))[:4000],
+        "check_latex": str(solution.get("check_latex", ""))[:2000],
+    }
+    if len(raw_steps) > len(selected):
+        summary["omitted_steps"] = len(raw_steps) - len(selected)
+    return json.dumps(summary, ensure_ascii=False)
+
+
 class Solver:
     def __init__(self, store, ai, settings):
         self.store, self.ai, self.settings = store, ai, settings
@@ -93,7 +128,7 @@ class Solver:
         self.store.update(tid, result={"solution": draft, "answer_status": "uncertain",
                                       "verification": "尚未完成", "text_path": str(path), "input_notes": input_notes})
 
-    async def attachment_inputs(self, task, directory, *, draft=False):
+    async def attachment_inputs(self, task, directory, *, draft=False, secondary_pdf=False):
         request = task["request"]
         blocks, images, input_notes, ocr_notes = [], [], [], []
         attachments = request.get("attachments", [])
@@ -103,28 +138,54 @@ class Solver:
         image_total, picture_total, batches = 0, 0, 0
         needs_confirmation = False
 
+        async def transcribe_with_fallback(batch, options):
+            nonlocal batches
+            batches += 1
+            try:
+                return [await self.ai.transcribe(batch, request.get("text", ""), **options)]
+            except AIError as exc:
+                if exc.code != "truncated":
+                    raise
+                if len(batch) > 1:
+                    middle = len(batch) // 2
+                    log.warning("vision_batch_split images=%s", len(batch))
+                    return (await transcribe_with_fallback(batch[:middle], options)
+                            + await transcribe_with_fallback(batch[middle:], options))
+                log.warning("vision_single_image_retry max_tokens=16000")
+                batches += 1
+                try:
+                    retry_options = {**options, "max_tokens": 16000}
+                    return [await self.ai.transcribe(batch, request.get("text", ""), **retry_options)]
+                except AIError as retry_error:
+                    if retry_error.code == "truncated":
+                        raise InputError("单页识图结果仍被截断；请裁剪题目区域或拆成更小的材料后重试。") from retry_error
+                    raise
+
         async def transcribe_batch(label=None, question_target=""):
-            nonlocal batches, needs_confirmation
+            nonlocal needs_confirmation
             if not images:
                 return
-            batches += 1
             options = {"draft": True} if draft else {}
             if question_target and not draft:
                 options["question_target"] = question_target
-            recognized = await self.ai.transcribe(images, request.get("text", ""), **options)
-            label = label or f"图片/PDF 转写（第 {batches} 批）"
-            blocks.append(label + "：\n" + recognized["problem_latex"])
+            label = label or f"图片/PDF 转写（第 {batches + 1} 批）"
+            recognized_batches = await transcribe_with_fallback(images, options)
+            for index, recognized in enumerate(recognized_batches, 1):
+                part_label = label if len(recognized_batches) == 1 else f"{label}（拆分识别 {index}/{len(recognized_batches)}）"
+                blocks.append(part_label + "：\n" + recognized["problem_latex"])
             if sum(map(len, blocks)) > 24000:
-                raise InputError("读取的材料超过 24000 字符，尚未完成全文处理；请随 PDF 指定较少页码（如只读第3-5页），或按小问拆分")
-            if recognized.get("notes"):
-                ocr_notes.append(recognized["notes"])
-            needs_confirmation |= not draft and recognized.get("needs_confirmation", False)
+                raise InputError(f"读取的材料超过 24000 字符，尚未完成全文处理；每份 PDF 每次最多读取 {MAX_INPUT_PAGES} 页，请按页码分段或按小问拆分。")
+            for recognized in recognized_batches:
+                if recognized.get("notes"):
+                    ocr_notes.append(recognized["notes"])
+                needs_confirmation |= not draft and recognized.get("needs_confirmation", False)
             images.clear()
 
         for index, item in enumerate(attachments):
             try:
                 if item.get("book_id"):
-                    data = BookLibrary(self.store.root).path(item["book_id"], include_removed=True)
+                    data = BookLibrary(self.store.root).path_for_storage_id(
+                        item["book_id"], include_removed=True)
                 else:
                     data = read_cached_attachment(self.store, task, item)
                 if data is None:
@@ -140,10 +201,12 @@ class Solver:
             if _is_pdf(item):
                 await transcribe_batch()
                 numbers_read = []
+                auto_pages = SECONDARY_INPUT_PAGES if (draft or secondary_pdf) else 0
                 try:
                     async with aclosing(render_input_pdf_batches_async(
                             data, directory / f"input-{index}",
-                            item.get("pdf_selection", request.get("text", "")))) as pdf_batches:
+                            item.get("pdf_selection", request.get("text", "")),
+                            auto_pages=auto_pages)) as pdf_batches:
                         async for pages, total, numbers, selected in pdf_batches:
                             images.extend((page, "image/png") for page in pages)
                             image_total += len(pages)
@@ -152,7 +215,12 @@ class Solver:
                                 f"{origin}（共 {total} 页，第 {'、'.join(map(str, numbers))} 页）",
                                 question_target=item.get("question_target", ""))
                             numbers_read.extend(numbers)
-                    scope = "已读取全部页面" if not selected else "已读取指定页面"
+                    if selected:
+                        scope = "已读取指定页面"
+                    elif auto_pages:
+                        scope = f"已自动读取前 {min(total, auto_pages)} 页"
+                    else:
+                        scope = "已读取全部页面"
                     input_notes.append(f"PDF 附件 {index + 1} 共 {total} 页，{scope}，本次读取第 {'、'.join(map(str, numbers_read))} 页")
                 except AIError:
                     raise
@@ -165,7 +233,8 @@ class Solver:
                 blocks.append(("附件草稿：\n" if draft else "附件题目：\n") + text)
             else:
                 if picture_total >= limit: raise InputError(f"本题最多识别 {limit} 张题目图片")
-                images.append((await asyncio.to_thread(normalize_image, data), "image/png"))
+                image, mime = await asyncio.to_thread(normalize_image, data)
+                images.append((image, mime))
                 image_total += 1
                 picture_total += 1
                 if len(images) == 4:
@@ -196,7 +265,10 @@ class Solver:
             parent = self.store.get(request["parent_id"], task["owner"])
             if not parent or parent["state"] == "expired" or not parent["problem"]:
                 raise InputError("原题已过期或还没有可复用的题干，请待原题识别完成后再补充")
-        materials, current_ocr, input_notes = await self.attachment_inputs(task, directory)
+        secondary_pdf = bool(request.get("parent_id") or request.get("retry_of")
+                             or request.get("collected") or request.get("secondary_pdf_auto"))
+        materials, current_ocr, input_notes = await self.attachment_inputs(
+            task, directory, secondary_pdf=secondary_pdf)
         inherited_ocr = parent.get("question_ocr", {}) if parent else request.get("question_ocr", {})
         question_ocr = merge_question_ocr(inherited_ocr, current_ocr)
         if question_ocr.get("notes") and not question_ocr.get("confirmed"):
@@ -210,7 +282,8 @@ class Solver:
                 blocks.append("本次补充/追问材料（结合原题重新核对）：\n" + "\n\n".join(x for x in additions if x))
             extra += "\n本次补充/追问：" + (request.get("text") or "请结合新附材料重新核对原题。")
             if parent["result"].get("solution"):
-                extra += "\n上次解答（可能存在错误，按本次要求重新核对）：\n" + json.dumps(parent["result"]["solution"], ensure_ascii=False)
+                extra += "\n上次解答摘要（可能存在错误，按本次要求重新核对）：\n" + \
+                    followup_solution_summary(parent["result"]["solution"])
         else:
             blocks = [request.get("quoted", ""), request.get("text", ""), *materials]
         problem = "\n\n".join(x for x in blocks if x).strip()

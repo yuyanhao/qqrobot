@@ -1,4 +1,10 @@
-FROM python:3.12-slim
+FROM python:3.12-slim-bookworm
+
+LABEL org.opencontainers.image.title="qqrobot" \
+      org.opencontainers.image.description="QQ official bot with DeepSeek math/physics solving" \
+      org.opencontainers.image.source="https://github.com/yuyanhao/qqrobot" \
+      org.opencontainers.image.licenses="MIT"
+
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1 \
     OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 DATA_DIR=/app/data
 WORKDIR /app
