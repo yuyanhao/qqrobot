@@ -13,6 +13,27 @@ from solver import study_problem
 from task_store import describe
 
 log = logging.getLogger("qq-math")
+TEXT_REPLY_LIMIT = 1800
+
+
+def _split_text_reply(text, max_parts):
+    remaining = str(text or "")
+    parts = []
+    while remaining and len(parts) < max_parts:
+        if len(remaining) <= TEXT_REPLY_LIMIT:
+            parts.append(remaining)
+            remaining = ""
+            break
+        boundary = remaining.rfind("\n", 0, TEXT_REPLY_LIMIT + 1)
+        if boundary < TEXT_REPLY_LIMIT // 2:
+            boundary = TEXT_REPLY_LIMIT
+        parts.append(remaining[:boundary].rstrip())
+        remaining = remaining[boundary:].lstrip()
+    truncated = bool(remaining)
+    if truncated and parts:
+        marker = "\n… 本次未完整发送，请缩短请求或分批提交材料。"
+        parts[-1] = parts[-1][:TEXT_REPLY_LIMIT - len(marker)] + marker
+    return parts or [""], truncated
 
 
 @dataclass
@@ -45,13 +66,22 @@ class TaskDelivery:
         else:
             raise QQMediaError("被动回复窗口或次数已用完，请用题号重新领取")
 
-    async def _text(self, context, text):
-        try:
-            await self._send(context, self.media.send_text, text[:1800])
-            return True
-        except Exception as exc:
-            log.warning("text_delivery_failed type=%s", type(exc).__name__)
-            return False
+    async def _text(self, context, text, *, max_parts=None):
+        allowed_parts = max(1, context.reply_limit - context.seq)
+        if self.settings.active_delivery:
+            allowed_parts = max(allowed_parts, context.reply_limit)
+        if max_parts is not None:
+            allowed_parts = min(allowed_parts, max(1, int(max_parts)))
+        parts, truncated = _split_text_reply(text, allowed_parts)
+        if truncated:
+            log.warning("text_reply_truncated chars=%s parts=%s", len(str(text or "")), len(parts))
+        for index, part in enumerate(parts, 1):
+            try:
+                await self._send(context, self.media.send_text, part)
+            except Exception as exc:
+                log.warning("text_delivery_failed part=%s/%s type=%s", index, len(parts), type(exc).__name__)
+                return False
+        return True
 
     async def _command_choices(self, context, text, choices):
         send_choices = getattr(self.media, "send_command_choices", None)
@@ -222,8 +252,9 @@ class TaskDelivery:
                 return
             # An automatic three-page C2C answer has exactly three slots left
             # after its acknowledgement. Verification remains in the page images.
+            # The status must not consume slots reserved for result images/files.
             if self.settings.active_delivery or room >= required + 1:
-                if not await self._text(context, status):
+                if not await self._text(context, status, max_parts=1):
                     self.store.update(tid, delivery="awaiting_query")
                     return
 

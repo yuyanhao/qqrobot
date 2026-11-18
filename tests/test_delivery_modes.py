@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from task_bot import HELP, ReplyContext, TaskBot
+from task_delivery import _split_text_reply
 from task_store import TaskStore
 
 
@@ -52,6 +53,7 @@ def make_bot(tmp_path):
     bot.contexts = {}
     bot.seen = OrderedDict()
     bot.running_task = bot.running_id = None
+    bot.book_admin_openid = ""
     bot._ensure_worker = lambda: None
     return bot
 
@@ -115,6 +117,30 @@ def test_three_page_delivery_fits_existing_reply_budget(tmp_path, kind, seq, typ
         finally:
             bot.store.close()
     asyncio.run(check())
+
+
+def test_long_status_does_not_consume_result_media_slots(tmp_path):
+    async def check():
+        bot = make_bot(tmp_path)
+        try:
+            task = saved_answer(bot, pages=3)
+            result = task["result"]
+            result["notes"] = "N" * 2400
+            bot.store.update(task["task_id"], result=result)
+            await bot._deliver(bot.store.get(task["task_id"]), context("c2c", 0))
+            assert [item[0] for item in bot.media.sent if item[0] != "text"] == ["image"] * 3
+            assert bot.store.get(task["task_id"])["delivery"] == "delivered"
+            texts = [item[1] for item in bot.media.sent if item[0] == "text"]
+            assert len(texts) == 1 and len(texts[0]) <= 1800
+        finally:
+            bot.store.close()
+    asyncio.run(check())
+
+
+def test_text_reply_split_marks_unfinished_tail():
+    parts, truncated = _split_text_reply("x" * 4000, 2)
+    assert len(parts) == 2 and truncated
+    assert parts[-1].endswith("… 本次未完整发送，请缩短请求或分批提交材料。")
 
 
 @pytest.mark.parametrize("prefix,is_pdf", [

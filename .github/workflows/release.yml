@@ -5,30 +5,81 @@ on:
     branches: [main]
     paths: [VERSION]
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Prepare and verify release notes without publishing
+        type: boolean
+        required: true
+        default: true
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: publish-version
   cancel-in-progress: false
 
 jobs:
-  release:
+  verify:
+    uses: ./.github/workflows/ci.yml
+
+  prepare:
+    needs: verify
+    if: github.event_name == 'workflow_dispatch' && inputs.dry_run == true
     runs-on: ubuntu-latest
     steps:
-      - name: Publish tag and release from VERSION
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Prepare release notes without publishing
+        run: |
+          python tools/check_release.py
+          python tools/extract_release_notes.py --output release-notes.md
+          {
+            echo "## Planned release v$(cat VERSION)"
+            echo
+            cat release-notes.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  release:
+    needs: verify
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.dry_run == false)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Validate version and extract this release's notes
+        run: |
+          python tools/check_release.py
+          python tools/extract_release_notes.py --output release-notes.md
+      - name: Publish tag and release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         shell: bash
         run: |
           set -euo pipefail
-          version="$(gh api "repos/$GITHUB_REPOSITORY/contents/VERSION?ref=$GITHUB_SHA" --jq .content | base64 --decode | tr -d '\r\n')"
-          [[ "$version" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || { echo 'Invalid VERSION'; exit 1; }
+          version="$(tr -d '\r\n' < VERSION)"
           tag="v$version"
-          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $tag already exists; keeping it."
-            exit 0
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists; refusing to replace it."
+            exit 1
           fi
-          gh api "repos/$GITHUB_REPOSITORY/contents/CHANGELOG.md?ref=$GITHUB_SHA" --jq .content | base64 --decode > release-notes.md
-          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$tag" --notes-file release-notes.md
+          if gh api "repos/$GH_REPO/git/ref/tags/$tag" >/dev/null 2>&1; then
+            echo "Tag $tag already exists; refusing to publish against it."
+            exit 1
+          fi
+          gh release create "$tag" --target "$GITHUB_SHA" --title "$tag" --notes-file release-notes.md

@@ -35,6 +35,7 @@ class TaskStore:
         self.results = self.root / "results"
         self.results.mkdir(exist_ok=True)
         self._retained_results = Counter()
+        self._disk_bytes_cache = (0.0, 0.0)
         self.db = sqlite3.connect(self.root / "tasks.sqlite3")
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
@@ -51,6 +52,9 @@ class TaskStore:
             columns = {row["name"] for row in self.db.execute("PRAGMA table_info(tasks)")}
             if "question_ocr" not in columns:
                 self.db.execute("ALTER TABLE tasks ADD COLUMN question_ocr TEXT NOT NULL DEFAULT '{}'")
+            self.db.execute("CREATE INDEX IF NOT EXISTS tasks_owner_state ON tasks(owner, state)")
+            self.db.execute("CREATE INDEX IF NOT EXISTS tasks_owner_created ON tasks(owner, created)")
+            self.db.execute("CREATE INDEX IF NOT EXISTS tasks_state_created ON tasks(state, created)")
             self.db.execute("""CREATE TABLE IF NOT EXISTS reusable_tasks (
                 owner TEXT NOT NULL, reuse_key TEXT NOT NULL, task_id TEXT NOT NULL UNIQUE,
                 PRIMARY KEY(owner,reuse_key))""")
@@ -63,6 +67,7 @@ class TaskStore:
             columns = {row["name"] for row in self.db.execute("PRAGMA table_info(favorites)")}
             if "question_ocr" not in columns:
                 self.db.execute("ALTER TABLE favorites ADD COLUMN question_ocr TEXT NOT NULL DEFAULT '{}'")
+            self.db.execute("CREATE INDEX IF NOT EXISTS favorites_owner_saved ON favorites(owner, saved)")
             self._restore_confirmation_links()
 
     def _restore_confirmation_links(self):
@@ -220,6 +225,19 @@ class TaskStore:
             "SELECT * FROM tasks WHERE owner=? AND state='collecting' ORDER BY id DESC LIMIT 1",
             (owner,)).fetchone())
 
+    def active_dependents(self, owner, task_id):
+        """Active or collecting tasks derived from task_id (follow-up, retry, check)."""
+        slots = ",".join("?" for _ in ACTIVE)
+        rows = self.db.execute(
+            f"SELECT * FROM tasks WHERE owner=? AND (state='collecting' OR state IN ({slots}))",
+            (owner, *ACTIVE)).fetchall()
+        dependents = []
+        for row in rows:
+            request = json.loads(row["request"])
+            if task_id in (request.get("parent_id"), request.get("retry_of"), request.get("origin_id")):
+                dependents.append(self._decode(row))
+        return dependents
+
     @staticmethod
     def _collection_materials(request):
         if not isinstance(request, dict):
@@ -318,7 +336,7 @@ class TaskStore:
                             (json.dumps(updated, ensure_ascii=False), time.time(), task["task_id"], owner))
         return self.get(task_id, owner), added
 
-    def start_collection(self, task_id, owner, *, max_active=5, max_user_active=2):
+    def start_collection(self, task_id, owner, *, max_active=5, max_user_active=2, request=None):
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
             task = self.get(task_id, owner)
@@ -328,12 +346,25 @@ class TaskStore:
                 raise ValueError("该题已开始或不在收集状态，请按题号查询进度")
             if task["error"].startswith("首批附件未保存"):
                 raise ValueError(f"{task['error']} 请用 /补图 {task['task_id']} 重新发送附件。")
-            request = self._collection_materials(task["request"])
-            if not (request["text"].strip() or request["quoted"].strip() or request["attachments"]):
+            request = self._collection_materials(request if request is not None else task["request"])
+            if not (request["text"].strip() or request["quoted"].strip() or request["attachments"]
+                    or request.get("question_attachments")):
                 raise ValueError("尚未收到题目材料，请先补图或补充文字")
             self._check_active_limits(owner, max_active, max_user_active)
-            self.db.execute("UPDATE tasks SET state='queued',updated=?,error='',delivery='pending' WHERE task_id=? AND owner=?",
-                            (time.time(), task["task_id"], owner))
+            self.db.execute("""UPDATE tasks SET state='queued',request=?,updated=?,error='',delivery='pending'
+                WHERE task_id=? AND owner=?""",
+                            (json.dumps(request, ensure_ascii=False), time.time(), task["task_id"], owner))
+        return self.get(task_id, owner)
+
+    def update_collection_request(self, task_id, owner, request):
+        with self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            task = self.get(task_id, owner)
+            if task is None or task["state"] != "collecting":
+                raise ValueError("题目已不在材料收集状态")
+            request = self._collection_materials(request)
+            self.db.execute("UPDATE tasks SET request=?,updated=? WHERE task_id=? AND owner=?",
+                            (json.dumps(request, ensure_ascii=False), time.time(), task_id, owner))
         return self.get(task_id, owner)
 
     def update(self, task_id, **fields):
@@ -419,9 +450,19 @@ class TaskStore:
             with self.db:
                 self.db.execute("DELETE FROM reusable_tasks WHERE task_id=?", (tid,))
                 self.db.execute("DELETE FROM tasks WHERE task_id=?", (tid,))
+        self.invalidate_disk_bytes()
 
     def disk_bytes(self):
-        return sum(p.stat().st_size for p in self.results.rglob("*") if p.is_file())
+        """Return result bytes, cached briefly because callers issue bursts of checks."""
+        now = time.monotonic()
+        if now - self._disk_bytes_cache[0] < 2.0:
+            return self._disk_bytes_cache[1]
+        total = sum(p.stat().st_size for p in self.results.rglob("*") if p.is_file())
+        self._disk_bytes_cache = (now, total)
+        return total
+
+    def invalidate_disk_bytes(self):
+        self._disk_bytes_cache = (0.0, 0.0)
 
 
 STATES = {"collecting": "收集中", "queued": "排队中", "reading": "读取题目", "planning": "确认题意", "searching": "检索资料",
@@ -439,7 +480,8 @@ def describe(task):
         count = len(task["request"].get("attachments") or [])
         lines.append(f"已收集 {count} 个附件，最多 12 个；尚未开始解题。")
         lines.append(f"/补图 {task['task_id']}（同条消息附图片）")
-        lines.append(f"/开始 {task['task_id']}（收齐材料后解题）")
+        lines.append(f"/解题 {task['task_id']}（收齐材料后解题）")
+        lines.append(f"/查错 {task['task_id']}（收齐材料后查错）")
     if result.get("answer_status") == "uncertain": lines.append("结论：仍有疑点，不能视为已解决")
     if result.get("verification"): lines.append("复核：" + result["verification"])
     if result.get("total_pages"): lines.append(f"完整 PDF：{result['total_pages']} 页")

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import hashlib
-from pathlib import Path
 import re
 from uuid import uuid4
 
@@ -65,6 +64,7 @@ async def cache_attachments(store, task, attachments, *, max_total_mb=512):
     urls = {attachment_key(item, "url") for item in previous}
     hashes = {attachment_key(item, "sha256") for item in previous}
     added = []
+    used_bytes = store.disk_bytes()
     try:
         for original in attachments:
             url = original.get("url", "")
@@ -86,7 +86,7 @@ async def cache_attachments(store, task, attachments, *, max_total_mb=512):
                 raise InputCacheError("同一道收集题最多 12 个附件，请分题提交")
             if not file.data or len(file.data) > attachment_limit(original) * 1024**2:
                 raise InputCacheError("附件为空或超过大小限制，请重新发送")
-            if store.disk_bytes() + len(file.data) > max_total_mb * 1024**2:
+            if used_bytes + len(file.data) > max_total_mb * 1024**2:
                 raise InputCacheError("材料缓存已达到容量预算，请稍后再提交")
             item = {**original, "url": url, "cached_name": uuid4().hex + ".bin",
                     "source_task_id": task["task_id"], "sha256": digest}
@@ -96,6 +96,7 @@ async def cache_attachments(store, task, attachments, *, max_total_mb=512):
             directory.mkdir(exist_ok=True)
             added.append(item)
             cached_path(store, task, item).write_bytes(file.data)
+            used_bytes += len(file.data)
             hashes.add((digest, selection))
         return added
     except BaseException as exc:

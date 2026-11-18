@@ -7,6 +7,7 @@ from datetime import datetime
 import logging
 import os
 import re
+import signal
 import sqlite3
 import time
 from urllib.parse import urlparse
@@ -15,11 +16,13 @@ import botpy
 from botpy.http import Route
 from botpy.message import BaseMessage
 
+# Load .env before importing modules that read optional limits at import time.
+from settings import Settings, validate_environment
+
 from ai import DeepSeek
 from book_library import BookLibrary
 from message_input import _is_pdf, clean_text, collect_attachments
 from qqmedia import QQMedia, qq_api_base_url
-from settings import Settings, validate_environment
 from solver import Solver
 from task_commands import HELP as HELP
 from task_commands import TaskCommands
@@ -76,10 +79,12 @@ class TaskBot(TaskCommands, TaskQueue, TaskDelivery, botpy.Client):
                 pending_file.unlink(missing_ok=True)
             except OSError:
                 log.warning("pending_book_upload_cleanup_failed")
+        BookLibrary(self.store.root).cleanup_staged()
         self.worker_task = None
         self.cleanup_task = None
         self.running_task = None
         self.running_id = None
+        self.cancel_requested = set()
         self.contexts = {}
         self.seen = OrderedDict()
         self.allowed_groups = {x.strip() for x in os.getenv("ALLOWED_GROUPS", "").split(",") if x.strip()}
@@ -136,18 +141,25 @@ class TaskBot(TaskCommands, TaskQueue, TaskDelivery, botpy.Client):
             if stamp: received = datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
         except (TypeError, ValueError): pass
         context = ReplyContext(kind, target, owner, message.id, received)
-        text = clean_text(getattr(message, "content", "") or "").strip()
-        text = re.sub(r"^[/／]\s*", "/", text)
-        quoted, attachments, quoted_urls = collect_attachments(message, raw)
-        if kind == "c2c" and not text.startswith("/"):
-            pdfs = [item for item in attachments if _is_pdf(item)]
-            if (target == self.book_admin_openid and attachments
-                    and not any(item["url"] in quoted_urls for item in attachments)):
-                await self._stage_book_upload(context, attachments)
-                return
-            if pdfs and not (text and any(item["url"] in quoted_urls for item in pdfs)):
-                return
-        await self._dispatch_command(context, text, quoted, attachments, quoted_urls=quoted_urls)
+        try:
+            text = clean_text(getattr(message, "content", "") or "").strip()
+            text = re.sub(r"^[/／]\s*", "/", text)
+            quoted, attachments, quoted_urls = collect_attachments(message, raw)
+            if kind == "c2c" and not text.startswith("/"):
+                pdfs = [item for item in attachments if _is_pdf(item)]
+                unquoted = not any(item["url"] in quoted_urls for item in attachments)
+                stage_attempted = False
+                if target == self.book_admin_openid and attachments and unquoted:
+                    stage_attempted = bool(pdfs) or (
+                        len(attachments) == 1 and self._is_ambiguous_book_attachment(attachments[0]))
+                    if stage_attempted and await self._stage_book_upload(context, attachments):
+                        return
+                if pdfs and not stage_attempted and not (text and any(item["url"] in quoted_urls for item in pdfs)):
+                    return
+            await self._dispatch_command(context, text, quoted, attachments, quoted_urls=quoted_urls)
+        except Exception as exc:
+            log.warning("message_handler_failed event=%s type=%s", message.id, type(exc).__name__, exc_info=True)
+            await self._text(context, "消息处理遇到内部错误。若已收到题号请用题号查询；否则请稍后重新发送。")
 
     async def shutdown(self):
         if self.cleanup_task:
@@ -164,14 +176,36 @@ class TaskBot(TaskCommands, TaskQueue, TaskDelivery, botpy.Client):
 
 async def run():
     client = TaskBot(botpy.Intents(public_messages=True))
+    loop = asyncio.get_running_loop()
+    stop = asyncio.Event()
     try:
-        while True:
+        loop.add_signal_handler(signal.SIGTERM, stop.set)
+    except (NotImplementedError, RuntimeError):
+        log.info("sigterm_handler_unavailable")
+
+    async def connect():
+        delay = 5
+        while not stop.is_set():
             try:
                 await client.start(os.environ["QQ_APPID"], os.environ["QQ_SECRET"])
+                delay = 5
             except Exception as exc:
-                log.warning("gateway_disconnected type=%s", type(exc).__name__)
-            await asyncio.sleep(5)
+                log.warning("gateway_disconnected type=%s retry_in=%s", type(exc).__name__, delay)
+            if not stop.is_set():
+                try:
+                    await asyncio.wait_for(stop.wait(), timeout=delay)
+                except TimeoutError:
+                    delay = min(delay * 2, 60)
+
+    gateway = asyncio.create_task(connect(), name="qq-gateway")
+    try:
+        await stop.wait()
     finally:
+        gateway.cancel()
+        try:
+            await gateway
+        except asyncio.CancelledError:
+            pass
         await client.shutdown()
 
 

@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-import logging
 import re
-
-
-log = logging.getLogger("qq-deepseek-bot.render")
 
 _SPECIAL = {
     "\\": r"\textbackslash{}",

@@ -3,10 +3,11 @@
 set -euo pipefail
 APP_DIR=/opt/qq-math-bot
 if [[ $# -eq 0 ]]; then
-  set -- Q261027-000011 Q261027-000012
+  echo '用法：sudo bash repair_pdf.sh 题号 [题号...]'
+  exit 1
 fi
 if [[ ${EUID} -ne 0 ]]; then
-  echo '请用 sudo bash repair_pdf.sh Q261027-000011 Q261027-000012 运行。'
+  echo '请用 sudo bash repair_pdf.sh 题号 [题号...] 运行。'
   exit 1
 fi
 for task_id in "$@"; do

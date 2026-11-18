@@ -87,18 +87,22 @@ def validate_environment(*, require_credentials=True):
     for name in ("SOLVE_MAX_TOKENS", "VERIFY_MAX_TOKENS"):
         if name in os.environ:
             number(name, 131072 if effort == "max" else 65536, 8192, 131072)
+    number("PDF_INPUT_MAX_PAGES", 5, 1, 5)
+    number("PDF_TASK_MAX_PAGES", 5, 1, 5)
+    number("BOOK_MAX_PDF_MB", 100, 1, 2048)
+    number("BOOK_LIBRARY_MAX_MB", 1024, 1, 10240)
     model = os.getenv("DEEPSEEK_MODEL", "deepseek-flash").strip()
     vision = os.getenv("VISION_MODEL", "deepseek-flash").strip()
     if not model or not vision:
         raise ValueError("DEEPSEEK_MODEL 和 VISION_MODEL 不能为空")
+    warnings = []
     if urlparse(base).hostname == "api.deepseek.com":
         if model not in ("deepseek-flash", "deepseek-v4-pro"):
-            raise ValueError("DEEPSEEK_MODEL 请使用官方现行名称 deepseek-flash 或 deepseek-v4-pro")
+            warnings.append("DEEPSEEK_MODEL 不在已验证列表中；仍会尝试启动，请确认该型号可用并保持 VISION_MODEL 为支持图片的型号")
         if vision != "deepseek-flash":
-            raise ValueError("VISION_MODEL 请使用支持图片的 deepseek-flash")
+            warnings.append("VISION_MODEL 不在已验证的图片模型列表中；仍会尝试启动，请确认该型号支持图片输入")
     if "DATA_DIR" in os.environ and not os.environ["DATA_DIR"].strip():
         raise ValueError("DATA_DIR 不能为空；使用默认目录时请删除这一行")
-    warnings = []
     if settings.solve_timeout + (settings.verify_timeout if settings.verify else 0) + 120 > settings.job_timeout:
         warnings.append("TASK_TIMEOUT 较小：识题、搜索及排版还需要时间，阶段预算可能无法用完")
     if settings.max_user_tasks > settings.max_queue:

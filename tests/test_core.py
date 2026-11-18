@@ -1,12 +1,11 @@
 import asyncio
 import json
 import math
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from ai import AIError, DeepSeek, extract_json, normalize_solution, validate_check
+from ai import AIError, DeepSeek, extract_json, normalize_solution, repair_json_escapes, validate_check
 from safe_math import Parser, run
 from task_store import TaskStore, QueueFull
 from task_bot import ReplyContext
@@ -25,6 +24,13 @@ def test_matrix_round_trip_preserves_row_breaks():
     original = doc()
     assert normalize_solution(extract_json(json.dumps(original)))["steps"] == original["steps"]
     assert sanitize_math(original["steps"][0]["math"]) == original["steps"][0]["math"]
+
+
+def test_json_repair_preserves_valid_backslash_pairs():
+    broken = '{"math": "\\frac{a}{b} \\\\ c"}'
+    repaired = repair_json_escapes(broken)
+    assert json.loads(repaired)["math"] == "\\frac{a}{b} \\ c"
+    assert json.loads(repair_json_escapes('{"math":"\\neq 0"}'))["math"] == "\\neq 0"
 
 
 @pytest.mark.parametrize("value", [{}, {"steps": []}, {"steps": "42"}, {"steps": [{}]}])
@@ -129,6 +135,21 @@ def test_queue_limit_and_new_task_not_eaten_by_old_result(tmp_path):
     two, created = store.create("alice", "3", "c2c", "a", {"text": "第二题"})
     assert created and two["task_id"] != one["task_id"]
     store.close()
+
+
+def test_disk_bytes_cache_invalidates_after_explicit_refresh(tmp_path):
+    store = TaskStore(tmp_path)
+    try:
+        task, _ = store.create("u", "m", "c2c", "u", {"text": "题目"})
+        path = store.task_dir(task["task_id"]) / "data.bin"
+        path.write_bytes(b"x" * 10)
+        first = store.disk_bytes()
+        path.write_bytes(b"x" * 20)
+        assert store.disk_bytes() == first
+        store.invalidate_disk_bytes()
+        assert store.disk_bytes() >= 20
+    finally:
+        store.close()
 
 
 def test_group_and_c2c_reply_windows(monkeypatch):

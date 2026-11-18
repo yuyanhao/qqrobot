@@ -1,18 +1,22 @@
 # qqrobot
 
-当前版本：[v0.2.5](https://github.com/yuyanhao/qqrobot/releases/tag/v0.2.5)。变更内容见 [CHANGELOG.md](CHANGELOG.md)。
+![CI](https://github.com/yuyanhao/qqrobot/actions/workflows/ci.yml/badge.svg)
+![Release](https://img.shields.io/github/v/release/yuyanhao/qqrobot)
+![License](https://img.shields.io/github/license/yuyanhao/qqrobot)
+
+当前代码版本：**v1.0.0**。变更内容见 [CHANGELOG.md](CHANGELOG.md)。
 
 `VERSION` 保存版本号；主分支更新此文件时，发布流程会创建对应 Git 标签和 GitHub Release。
 
-基于 QQ 官方机器人接口与 DeepSeek 的数学、物理解题机器人。支持文字、图片、PDF 输入，按题号保存任务、关联追问，并将解答排版为图片和完整 PDF。
+基于 QQ 官方机器人接口与 DeepSeek 的数学、物理解题机器人。支持文字、图片、PDF 输入，按题号保存任务、关联追问，并将解答排版为图片和完整 PDF。代码按 MIT License 授权，详见 [LICENSE](LICENSE)。
 
 模型推理在远端 API 完成，本地负责材料处理、任务队列、SymPy 辅助计算、绘图、持久化与 XeLaTeX 排版。程序面向个人或小范围使用，默认串行处理重任务；部署配置为服务设置了 1536 MB 内存上限。
 
 ## 功能
 
 - 数学、物理题解答、概念解释、证明检查及关联追问；按需调用 DeepSeek 搜索。
-- 文字、题图与 PDF 识题；PDF 默认读取全部页面，也支持指定连续或分散页码。
-- 多图收集：先登记题号，分消息补齐照片，再统一开始解题。
+- 文字、题图与 PDF 识题；每份要读取的 PDF 都必须明确指定物理页码，每份 PDF 和单任务合计均最多读取 5 页。
+- 多图收集：先登记题号，分消息补齐照片或 PDF，再用「/解题 收集题号」或「/查错 收集题号」处理。
 - 即时返回题号，SQLite 保存题干、任务状态、草稿与结果，重启后可以继续查询。
 - 区分解答生成与复核状态；超时或复核失败时，已保存的草稿仍可领取。
 - 解答为 1–3 页时默认发送全部页面图片，超过 3 页时默认发送完整 PDF；支持单独领取 PDF、图片和分段文字。
@@ -93,10 +97,10 @@ docker compose logs --tail=100
 
 群聊每条操作都需 @ 机器人，私聊可直接发送。带题号的操作用原账号在原会话发送。
 
-- 直接发数学或物理题的文字、图。群聊可 @ 机器人并附 PDF，私聊先发 PDF，再引用文件消息并写明要求。普通 PDF 每份最多 10 MB，可写「只读第3-5页」指定文件页码。多条提交材料先用「/收集」，再用「/补图 收集题号」追加，发「/开始 收集题号」解题。
-- 「/查错 题号」同条可附多张草稿图。也可引用原题，再发「/查错」并附上或写出过程。用普通 PDF 作题面时，可以在同条命令写「/查错 第3页 我先令 t=x」。
+- 直接发数学或物理题的文字、图。群聊可 @ 机器人并附 PDF，私聊先发 PDF，再引用文件消息并写明要求。普通 PDF 每份最多 10 MB；所有要读取的 PDF，包括题面、草稿、追问和附加材料，都必须写明页码，每份 PDF 和单任务累计最多 5 页。未写页码不会读取。多条提交材料先用「/收集」，再用「/补图 收集题号」追加，发「/解题 收集题号」解题（旧写法「/开始 收集题号」仍可用）。
+- 查错推荐先把题目和草稿用「/收集」收进同一题号，再发「/查错 收集题号」；自动识别题目和草稿，不准时用「/查错 收集题号 1题 2-4稿」指定。也可用「/查错 题号」在同一条消息附草稿，或用「/查错 同页」发一张题目和作答同页的图。PDF 页码须在收集或同条命令中指定，每份 PDF 和每个任务最多 5 页。查错会指出第一处错误、说明原因并给出更正结论。
 - 直接发题号或「/结果 题号」查询并领取，排版后 1–3 页发全部图片，超过 3 页发 PDF。若只有文字稿，会发回第一段，再按提示用「/结果 题号 第2段」继续领取。用「/PDF 题号」可指定领取完整 PDF。
-- 「/书库」查看共享 PDF，编号按当前在库顺序连续排列；移除一本后，后续书籍编号自动顺延。「/引用 B0001 第3-5页」读取指定书页。管理员可在私聊同条附 PDF 入库，也可先单独发送 PDF，收到暂存确认后再发「/入库 书名」（15 分钟内有效），无需引用或重发文件；也可在云端终端导入。程序对管理员入库的 PDF 不设文件大小上限。已登记的任务仍会读取原来关联的书籍。
+- 「/书库」查看共享 PDF，编号按当前在库顺序连续排列；移除一本后，后续书籍编号自动顺延。「/引用 B0001 第3-5页」读取指定书页。所有附加 PDF 也须明确指定页码，且整项任务累计最多 5 页。管理员书库单份 PDF 默认限 100 MB、书库总量默认限 1 GB（`BOOK_MAX_PDF_MB` / `BOOK_LIBRARY_MAX_MB`）；暂存 15 分钟后过期。
 - 「/收藏 题号」永久保存，解答完成后补入。「/复习」选题，「/复习 题号」领取题目和答案，「/错题本」导出本会话全部收藏。普通结果默认保留 7 天。
 - 手机 QQ 群的原生面板可用 python qq_panel.py 预览，部署后用 python qq_panel.py --apply 同步。「/最近」列出最近 3 个可点击的题号和提交时间。
 
@@ -115,6 +119,8 @@ docker compose logs --tail=100
 | `SOLVE_MAX_TOKENS` / `VERIFY_MAX_TOKENS` | 按档位选择 | 默认 65536；`max` 档为 131072，可单独覆盖 |
 | `QQ_API_BASE_URL` | `https://api.bot.qq.com` | QQ SDK 与媒体请求共用的 HTTPS 地址 |
 | `SEARCH_ENABLED` | `true` | 解题流程按需搜索，复用模型密钥 |
+| `PDF_INPUT_MAX_PAGES` / `PDF_TASK_MAX_PAGES` | `5` / `5` | 单份 PDF 页数上限与单任务合计页数上限；合法配置范围均为 1–5 页；每份待读取 PDF 均须明确指定页码 |
+| `BOOK_MAX_PDF_MB` / `BOOK_LIBRARY_MAX_MB` | `100` / `1024` | 管理员书库单份 PDF 与书库总容量上限 |
 | `TASK_TIMEOUT` | `1200` | 单题总预算，秒；不含排队和交付 |
 | `SOLVE_TIMEOUT` / `VERIFY_TIMEOUT` | `600` / `300` | 单次解题与复核上限，秒，仍受总预算约束 |
 | `VERIFY_SOLUTION` / `SYMPY_ENABLED` | `true` / `true` | 模型复核与符号计算 |
@@ -126,6 +132,8 @@ docker compose logs --tail=100
 | `DATA_DIR` | 程序旁的 `data` | 直接运行的默认目录；systemd 和 Docker 固定使用各自持久化目录 |
 
 白名单中的 OpenID 不是普通 QQ 号码。留空时接入范围由 QQ 平台已有权限决定。次数配额并非金额上限，一道题可能包含多次模型请求。
+
+使用 DeepSeek 官方接口时，已验证的 `DEEPSEEK_MODEL` 为 `deepseek-flash` 和 `deepseek-v4-pro`，已验证的 `VISION_MODEL` 为支持图片的 `deepseek-flash`。其他非空名称会给出启动提示并尝试运行；请确认上游可用性和图片能力。
 
 旧 `PDF_INPUT_PAGES`、`BOCHA_*` 等配置不再控制本项目，迁移时以当前模板为准。
 
@@ -160,31 +168,49 @@ python -m pytest -q
 
 ## 更新
 
-先等待当前任务完成并备份实际 `.env` 与数据目录。使用 GitHub v0.2.6 源码包，在服务器上执行以下命令。第一条在当前机器人目录下备份数据和配置，第二条下载并解压 v0.2.6，最后安装程序。
+先等待当前任务完成，停止旧、新 systemd 服务并备份实际 `.env`、代码和数据目录。停止服务可确保 SQLite WAL 与附件一起保持一致。正式发布标签为 v1.0.0。
 
 ```bash
 cd /opt/qq-math-bot
-sudo tar -czf "/root/qq-math-bot-before-v0.2-$(date +%Y%m%d-%H%M%S).tar.gz" .env data
+sudo systemctl stop qqbot || true
+sudo systemctl stop qq-math-bot || true
+stamp=$(date +%Y%m%d-%H%M%S)
+sudo tar -czf "/root/qq-math-bot-before-v1.0.0-$stamp.tar.gz" -C /opt/qq-math-bot .env data
+sudo tar -czf "/root/qq-math-bot-code-before-v1.0.0-$stamp.tar.gz" -C /opt/qq-math-bot --exclude=data --exclude=.env .
 cd /tmp
-curl -fL https://github.com/yuyanhao/qqrobot/archive/refs/tags/v0.2.6.tar.gz -o qqrobot-v0.2.6.tar.gz
-mkdir -p qqrobot-v0.2.6
-tar -xzf qqrobot-v0.2.6.tar.gz --strip-components=1 -C qqrobot-v0.2.6
-cd qqrobot-v0.2.6
-sudo systemctl stop qqbot
+curl -fL https://github.com/yuyanhao/qqrobot/archive/refs/tags/v1.0.0.tar.gz -o qqrobot-v1.0.0.tar.gz
+rm -rf qqrobot-v1.0.0
+mkdir -p qqrobot-v1.0.0
+tar -xzf qqrobot-v1.0.0.tar.gz --strip-components=1 -C qqrobot-v1.0.0
+cd qqrobot-v1.0.0
 sudo bash setup.sh
+sudo -u qqbot /opt/qq-math-bot/.venv/bin/python /opt/qq-math-bot/qq_panel.py --apply
 ```
 
-安装脚本保留 `/opt/qq-math-bot/.env`、题目数据库、附件、收藏和书库文件，更新 Python 依赖及服务定义后启动 `qq-math-bot`。脚本要求先停止名为 `qqbot` 的旧服务。首次更新后检查 `sudo systemctl status qq-math-bot` 和 `sudo journalctl -u qq-math-bot -n 100 --no-pager`，并在 QQ 私聊或群里发送 `/帮助`。若当前服务器用 Docker，按下方 Docker 步骤更新。
+安装脚本只在 `/opt/qq-math-bot/.env` 不存在时才复制模板，已有 `.env`、题目数据库、附件、收藏和书库文件不会被覆盖。不要用 `.env.example` 覆盖 `.env`，也不要执行 `git clean -fdx`。脚本要求先停止名为 `qqbot` 的旧服务。首次更新后检查 `sudo systemctl status qq-math-bot` 和 `sudo journalctl -u qq-math-bot -n 100 --no-pager`，并在 QQ 私聊或群里发送 `/帮助`。若当前服务器用 Docker，按下方 Docker 步骤更新。
 
-Docker 部署在仓库目录下载 v0.2 并重新构建。先进入现有 Compose 项目目录，并按部署情况备份环境配置与持久化数据：
+Docker 更新在现有 Compose 项目目录执行；`.env` 由 Compose 的 `env_file` 读取，更新时保持不变：
 
 ```bash
-git fetch --tags origin
-git checkout v0.2
+cd /path/to/qqrobot
+cp .env "/root/qqbot-env-before-v1.0.0-$(date +%Y%m%d-%H%M%S)"
+docker compose stop
+volume="$(docker volume ls -q --filter label=com.docker.compose.volume=qqbot-data | head -n 1)"
+test -n "$volume"
+backup="qqbot-data-before-v1.0.0-$(date +%Y%m%d-%H%M%S).tar.gz"
+docker run --rm -v "$volume:/data:ro" -v "$PWD:/backup" alpine:3.22 \
+  tar -czf "/backup/$backup" -C /data .
+git fetch --tags
+git checkout v1.0.0
 docker compose up -d --build
+docker compose exec qqbot python qq_panel.py --apply
 ```
 
-`update_delivery.sh`、`update_search.sh`、`update_pdf_input.sh` 和 `repair_pdf.sh` 是针对默认 systemd 安装的专项维护脚本。它们的更新范围各不相同，不能替代完整安装；使用前请阅读脚本注释并确认安装路径。
+不要执行 `docker compose down -v`，它会删除数据卷。发布页为 `https://github.com/yuyanhao/qqrobot/releases/tag/v1.0.0`，源码归档地址为 `https://github.com/yuyanhao/qqrobot/archive/refs/tags/v1.0.0.tar.gz`；使用 Git 仓库目录部署时，正式发布后可执行 `git checkout v1.0.0`。
+
+`update_delivery.sh` 和 `update_pdf_input.sh` 已停用，避免旧代码覆盖当前版本的安全限制。`update_search.sh` 仅用于旧版搜索迁移；新部署请使用完整安装包和 `setup.sh`。`repair_pdf.sh` 只重排已保存的解答，不处理输入 PDF。
+
+备份与旧版升级说明见 [数据备份](docs/backup.md) 和 [升级指南](docs/upgrading.md)。
 
 ## 常见问题
 

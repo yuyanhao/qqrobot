@@ -48,8 +48,7 @@ async def render_artifacts_async(doc: dict, output_dir: Path, task_id: str,
         succeeded = True
         return result
     except Exception as exc:
-        for path in output_dir.glob("*.pdf"):
-            path.unlink(missing_ok=True)
+        (output_dir / "solution.pdf").unlink(missing_ok=True)
         error_path.write_text(str(exc)[:2000], encoding="utf-8")
         raise RenderError(str(exc)) from exc
     finally:
@@ -77,10 +76,12 @@ async def render_preview_async(pdf_path: Path, output_dir: Path, start_page: int
 
 
 async def render_input_pdf_async(data: bytes, directory: Path, text: str = "",
-                                  max_pages: int = 0, dpi: int = 160, timeout: int = 60):
+                                  max_pages: int = 0, dpi: int = 160, timeout: int = 60,
+                                  auto_pages: int = 0):
     """Compatibility helper; the solver consumes batches without retaining all images."""
     images, numbers = [], []
-    async with aclosing(render_input_pdf_batches_async(data, directory, text, max_pages, dpi, timeout)) as batches:
+    async with aclosing(render_input_pdf_batches_async(
+            data, directory, text, max_pages, dpi, timeout, auto_pages=auto_pages)) as batches:
         async for batch, total, pages, selected in batches:
             images.extend(batch)
             numbers.extend(pages)
@@ -88,7 +89,8 @@ async def render_input_pdf_async(data: bytes, directory: Path, text: str = "",
 
 
 async def render_input_pdf_batches_async(data: bytes | Path, directory: Path, text: str = "",
-                                         max_pages: int = 0, dpi: int = 160, timeout: int = 60):
+                                         max_pages: int = 0, dpi: int = 160, timeout: int = 60,
+                                         auto_pages: int = 0):
     """Keep one input PDF on disk and yield at most four page images at a time."""
     directory = directory.resolve()
     directory.mkdir(parents=True, exist_ok=True)
@@ -105,6 +107,7 @@ async def render_input_pdf_batches_async(data: bytes | Path, directory: Path, te
         while True:
             request.write_text(json.dumps({"mode": "input", "text": text,
                                           "max_pages": max_pages, "dpi": dpi,
+                                          "auto_pages": auto_pages,
                                           "offset": offset, "count": 4, "book": isinstance(data, Path)}),
                                      encoding="utf-8")
             try:

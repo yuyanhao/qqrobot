@@ -174,7 +174,8 @@ def test_collection_progress_explains_attachment_count_and_next_commands(store):
     task = draft(store, attachments=[image(1), image(2)])
     text = describe(task)
     assert "收集中" in text and "2 个附件" in text and "尚未开始" in text
-    assert f"/补图 {task['task_id']}" in text and f"/开始 {task['task_id']}" in text
+    assert f"/补图 {task['task_id']}" in text and f"/解题 {task['task_id']}" in text
+    assert f"/查错 {task['task_id']}" in text
 
 
 @pytest.mark.parametrize("state", ["completed", "reading", "cancelled"])
