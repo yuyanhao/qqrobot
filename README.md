@@ -4,7 +4,7 @@
 ![Release](https://img.shields.io/github/v/release/yuyanhao/qqrobot)
 ![License](https://img.shields.io/github/license/yuyanhao/qqrobot)
 
-当前代码版本：**v0.3.0（准备中，尚未创建正式标签或 Release）**。变更内容见 [CHANGELOG.md](CHANGELOG.md)。
+当前代码版本：**v1.0.0**。变更内容见 [CHANGELOG.md](CHANGELOG.md)。
 
 `VERSION` 保存版本号；主分支更新此文件时，发布流程会创建对应 Git 标签和 GitHub Release。
 
@@ -168,38 +168,45 @@ python -m pytest -q
 
 ## 更新
 
-先等待当前任务完成，停止旧、新 systemd 服务并备份实际 `.env` 与数据目录。停止服务可确保 SQLite WAL 与附件一起保持一致。当前准备版尚未发布标签；如需在验收机上部署，请从 `codex/prepare-v0.3.0` 分支获取源码。
+先等待当前任务完成，停止旧、新 systemd 服务并备份实际 `.env`、代码和数据目录。停止服务可确保 SQLite WAL 与附件一起保持一致。正式发布标签为 v1.0.0。
 
 ```bash
 cd /opt/qq-math-bot
 sudo systemctl stop qqbot || true
 sudo systemctl stop qq-math-bot || true
-sudo tar -czf "/root/qq-math-bot-before-v1.0.0-$(date +%Y%m%d-%H%M%S).tar.gz" .env data
+stamp=$(date +%Y%m%d-%H%M%S)
+sudo tar -czf "/root/qq-math-bot-before-v1.0.0-$stamp.tar.gz" -C /opt/qq-math-bot .env data
+sudo tar -czf "/root/qq-math-bot-code-before-v1.0.0-$stamp.tar.gz" -C /opt/qq-math-bot --exclude=data --exclude=.env .
 cd /tmp
-curl -fL https://github.com/yuyanhao/qqrobot/archive/refs/heads/codex/prepare-v0.3.0.tar.gz -o qqrobot-v0.3.0.tar.gz
-mkdir -p qqrobot-v0.3.0
-tar -xzf qqrobot-v0.3.0.tar.gz --strip-components=1 -C qqrobot-v0.3.0
-cd qqrobot-v0.3.0
+curl -fL https://github.com/yuyanhao/qqrobot/archive/refs/tags/v1.0.0.tar.gz -o qqrobot-v1.0.0.tar.gz
+rm -rf qqrobot-v1.0.0
+mkdir -p qqrobot-v1.0.0
+tar -xzf qqrobot-v1.0.0.tar.gz --strip-components=1 -C qqrobot-v1.0.0
+cd qqrobot-v1.0.0
 sudo bash setup.sh
+sudo -u qqbot /opt/qq-math-bot/.venv/bin/python /opt/qq-math-bot/qq_panel.py --apply
 ```
 
-安装脚本保留 `/opt/qq-math-bot/.env`、题目数据库、附件、收藏和书库文件，更新 Python 依赖及服务定义后启动 `qq-math-bot`。脚本要求先停止名为 `qqbot` 的旧服务。首次更新后检查 `sudo systemctl status qq-math-bot` 和 `sudo journalctl -u qq-math-bot -n 100 --no-pager`，并在 QQ 私聊或群里发送 `/帮助`。若当前服务器用 Docker，按下方 Docker 步骤更新。
+安装脚本只在 `/opt/qq-math-bot/.env` 不存在时才复制模板，已有 `.env`、题目数据库、附件、收藏和书库文件不会被覆盖。不要用 `.env.example` 覆盖 `.env`，也不要执行 `git clean -fdx`。脚本要求先停止名为 `qqbot` 的旧服务。首次更新后检查 `sudo systemctl status qq-math-bot` 和 `sudo journalctl -u qq-math-bot -n 100 --no-pager`，并在 QQ 私聊或群里发送 `/帮助`。若当前服务器用 Docker，按下方 Docker 步骤更新。
 
-Docker 验收部署在仓库目录切换到 `codex/prepare-v0.3.0` 并重新构建。先进入现有 Compose 项目目录，停止服务并备份持久化卷：
+Docker 更新在现有 Compose 项目目录执行；`.env` 由 Compose 的 `env_file` 读取，更新时保持不变：
 
 ```bash
-git fetch origin codex/prepare-v0.3.0
+cd /path/to/qqrobot
+cp .env "/root/qqbot-env-before-v1.0.0-$(date +%Y%m%d-%H%M%S)"
 docker compose stop
 volume="$(docker volume ls -q --filter label=com.docker.compose.volume=qqbot-data | head -n 1)"
 test -n "$volume"
-backup="qqbot-data-before-v0.3.0-$(date +%Y%m%d-%H%M%S).tar.gz"
+backup="qqbot-data-before-v1.0.0-$(date +%Y%m%d-%H%M%S).tar.gz"
 docker run --rm -v "$volume:/data:ro" -v "$PWD:/backup" alpine:3.22 \
   tar -czf "/backup/$backup" -C /data .
-git checkout codex/prepare-v0.3.0
+git fetch --tags
+git checkout v1.0.0
 docker compose up -d --build
+docker compose exec qqbot python qq_panel.py --apply
 ```
 
-正式发布后，再将部署版本切换到对应标签，例如执行 `git checkout v0.3.0`；发布页为 `https://github.com/yuyanhao/qqrobot/releases/tag/v0.3.0`，源码归档地址为 `https://github.com/yuyanhao/qqrobot/archive/refs/tags/v0.3.0.tar.gz`。
+不要执行 `docker compose down -v`，它会删除数据卷。发布页为 `https://github.com/yuyanhao/qqrobot/releases/tag/v1.0.0`，源码归档地址为 `https://github.com/yuyanhao/qqrobot/archive/refs/tags/v1.0.0.tar.gz`；使用 Git 仓库目录部署时，正式发布后可执行 `git checkout v1.0.0`。
 
 `update_delivery.sh` 和 `update_pdf_input.sh` 已停用，避免旧代码覆盖当前版本的安全限制。`update_search.sh` 仅用于旧版搜索迁移；新部署请使用完整安装包和 `setup.sh`。`repair_pdf.sh` 只重排已保存的解答，不处理输入 PDF。
 
