@@ -5,9 +5,9 @@ from types import SimpleNamespace
 import pytest
 from botpy.http import Route
 
-from qqmedia import QQMedia, QQMediaError, qq_api_base_url
-from settings import Settings
-from task_bot import TaskBot
+from qqrobot.media.qqmedia import QQMedia, QQMediaError, qq_api_base_url
+from qqrobot.settings import Settings
+from qqrobot.tasks.task_bot import TaskBot
 
 
 @pytest.mark.parametrize("value", [
@@ -36,8 +36,8 @@ def test_taskbot_uses_same_origin_and_delivery_setting_for_both_transports(monke
     monkeypatch.setenv("ACTIVE_DELIVERY", "false")
     monkeypatch.setattr(Route, "DOMAIN", Route.DOMAIN)
     monkeypatch.setattr("botpy.Client.__init__", lambda self, **kwargs: None)
-    monkeypatch.setattr("task_bot.DeepSeek", lambda *args, **kwargs: object())
-    monkeypatch.setattr("task_bot.TaskStore", lambda directory: SimpleNamespace(
+    monkeypatch.setattr("qqrobot.tasks.task_bot.ModelClient", lambda *args, **kwargs: object())
+    monkeypatch.setattr("qqrobot.tasks.task_bot.TaskStore", lambda directory: SimpleNamespace(
         root=directory, recover=lambda: None, cleanup=lambda ttl: None, pending_book_ids=lambda ttl: set()))
     bot = TaskBot(None, settings=Settings(data_dir=tmp_path, active_delivery=True))
     assert bot.media.base == "https://qq-api.example:8443"
@@ -52,7 +52,7 @@ def test_invalid_origin_fails_before_sdk_or_store_construction(monkeypatch):
     monkeypatch.setenv("QQ_API_BASE_URL", "https://qq-api.example/unsupported-prefix")
     opened = []
     monkeypatch.setattr("botpy.Client.__init__", lambda self, **kwargs: opened.append("sdk"))
-    monkeypatch.setattr("task_bot.TaskStore", lambda *args: opened.append("store"))
+    monkeypatch.setattr("qqrobot.tasks.task_bot.TaskStore", lambda *args: opened.append("store"))
     with pytest.raises(ValueError, match="QQ_API_BASE_URL"):
         TaskBot(None)
     assert not opened

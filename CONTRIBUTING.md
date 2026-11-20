@@ -8,7 +8,7 @@ Use Python 3.12 or newer. Copy `.env.example` to `.env` only when you need to ru
 python -m venv .venv
 . .venv/bin/activate
 python -m pip install -r requirements-dev.txt
-python settings.py --allow-missing-credentials
+python -m qqrobot.settings --allow-missing-credentials
 python -m ruff check .
 python -m pytest -q
 ```

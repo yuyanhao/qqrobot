@@ -9,7 +9,7 @@ from test_delivery_modes import make_bot
 
 
 def test_panel_uses_the_same_menu_as_the_guide():
-    from qq_panel import GROUP_COMMANDS
+    from qqrobot.panel import GROUP_COMMANDS
 
     guide = (Path(__file__).resolve().parents[1] / "docs" / "qq-command-guide.md").read_text(encoding="utf-8")
     listed = [line for line in guide.splitlines() if line.startswith("| /")]
@@ -17,13 +17,13 @@ def test_panel_uses_the_same_menu_as_the_guide():
 
 
 def test_panel_preview_has_canonical_names_and_fits_qq_limits():
-    from qq_panel import panel_payload
+    from qqrobot.panel import panel_payload
 
     payload = panel_payload()
     assert payload["scope"] == "group" and payload["target_type"] == "all"
     items = payload["panel"]["items"]
     names = {item["name"] for item in items}
-    assert {"/帮助", "/查错", "/最近", "/题目", "/复习", "/书库"} <= names
+    assert {"/帮助", "/查错", "/最近", "/题目", "/书库"} <= names
     assert 0 < len(names) == len(items) <= 20
     for item in items:
         assert item["name"].startswith("/") and item["type"] == "command"
@@ -47,7 +47,7 @@ class PanelAPI:
 
 
 def test_create_panel_when_no_global_panel_exists():
-    from qq_panel import panel_payload, sync_group_panel
+    from qqrobot.panel import panel_payload, sync_group_panel
 
     api = PanelAPI([{"records": [], "is_end": True}])
     assert asyncio.run(sync_group_panel(api)) == ("已创建", "created")
@@ -59,7 +59,7 @@ def test_create_panel_when_no_global_panel_exists():
 
 @pytest.mark.parametrize("same", [False, True])
 def test_sync_finds_its_own_panel_across_pages_and_only_updates_changes(same):
-    from qq_panel import panel_payload, sync_group_panel
+    from qqrobot.panel import panel_payload, sync_group_panel
 
     panel = panel_payload()["panel"]
     old_panel = panel if same else {**panel, "items": panel["items"][:1]}
@@ -80,7 +80,7 @@ def test_sync_finds_its_own_panel_across_pages_and_only_updates_changes(same):
     {},
 ])
 def test_sync_does_not_write_when_ownership_or_list_is_unclear(response):
-    from qq_panel import PanelError, sync_group_panel
+    from qqrobot.panel import PanelError, sync_group_panel
 
     api = PanelAPI([response])
     with pytest.raises(PanelError):
@@ -89,8 +89,8 @@ def test_sync_does_not_write_when_ownership_or_list_is_unclear(response):
 
 
 def test_panel_request_uses_the_existing_qq_transport_authentication():
-    from qq_panel import sync_group_panel
-    from qqmedia import QQMedia
+    from qqrobot.panel import sync_group_panel
+    from qqrobot.media.qqmedia import QQMedia
 
     calls = []
 

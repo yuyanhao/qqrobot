@@ -3,8 +3,8 @@ from pathlib import Path
 import time
 from types import SimpleNamespace
 
-from task_bot import TaskBot, ReplyContext
-from task_store import TaskStore
+from qqrobot.tasks.task_bot import TaskBot, ReplyContext
+from qqrobot.tasks.task_store import TaskStore
 
 
 def make_bot(tmp_path, run, timeout=1):
@@ -71,7 +71,7 @@ def test_overall_timeout_preserves_draft_for_new_query(tmp_path):
         async def text(context, value): sent.append((context.message_id, value)); return True
         bot._text = text
         await bot._deliver(row, ReplyContext('c2c', 'u', 'u', 'new-query', time.time()), 'PDF')
-        assert sent[0][0] == 'new-query' and '没有可用 PDF' in sent[0][1]
+        assert sent[0][0] == 'new-query' and '暂无 PDF' in sent[0][1]
         assert '已经完成的推导' in Path(row['result']['text_path']).read_text(encoding='utf-8')
         await stop_worker(worker)
         bot.store.close()
@@ -117,7 +117,7 @@ def test_restart_keeps_draft_without_recharging(tmp_path):
 
 
 def test_all_three_skills_are_loaded_into_solver_prompt():
-    from skill_loader import load_solver_instructions
+    from qqrobot.core.skill_loader import load_solver_instructions
     text = load_solver_instructions()
     for name in ('math-solving', 'physics-solving', 'math-physics-plotting'):
         assert f'【{name} 教学规范】' in text

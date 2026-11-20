@@ -3,9 +3,9 @@ import base64
 import hashlib
 import time
 
-from qqmedia import QQMedia
-from task_bot import TaskBot, ReplyContext
-from task_store import TaskStore
+from qqrobot.media.qqmedia import QQMedia
+from qqrobot.tasks.task_bot import TaskBot, ReplyContext
+from qqrobot.tasks.task_store import TaskStore
 from types import SimpleNamespace
 
 
@@ -43,7 +43,7 @@ def test_large_local_pdf_chunks_without_public_hosting(tmp_path, monkeypatch):
                 return Response()
         async def session(): return Session()
         async def public(url): pass
-        monkeypatch.setattr("qqmedia._check_public_url", public)
+        monkeypatch.setattr("qqrobot.media.qqmedia._check_public_url", public)
         media._get_session = session
         async def request(path, payload):
             calls.append((path, payload))

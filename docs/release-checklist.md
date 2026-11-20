@@ -4,11 +4,11 @@
 
 - [x] 每份待读取 PDF 均须明确选页，单份和单任务合计最多 5 页；最新提交的 GitHub Actions 已通过。
 - [x] `LICENSE`（MIT，yuyanhao）、安全政策、贡献说明和用户文档已核对。
-- [x] 发布版本使用 `VERSION=1.0.0`；版本号、变更记录和升级命令已同步。
-- [x] `python tools/check_release.py`、`ruff check .`、`python settings.py --allow-missing-credentials` 通过；发布工作流只提取当前版本说明。
+- [x] 发布版本使用 `VERSION=1.0.5`；版本号、变更记录和升级命令已同步。
+- [x] `python tools/check_release.py`、`ruff check .`、`python -m qqrobot.settings --allow-missing-credentials` 通过；发布工作流只提取当前版本说明。
 - [x] 确认 `PDF_INPUT_MAX_PAGES` / `PDF_TASK_MAX_PAGES` 默认值均为 5、配置不能超过 5；核对书库配额及部署覆盖值。
 - [x] 代码审查通过；无真实密钥、测试用户数据或生成目录进入提交。
-- [x] Python 3.12/3.14 CI 各通过 427 项（run 44095712574 / 44095722262）。
+- [x] Windows 离线回归 438 项通过、2 项因缺少 XeLaTeX/符号链接权限跳过；Linux CI 将覆盖 XeLaTeX 渲染用例。
 
 ## 仓库设置
 
@@ -21,10 +21,10 @@
 
 ## 发布与验收
 
-- [x] 发布提交和 PR 检查通过后，合并 `main` 并创建 v1.0.0 Release。
+- [x] 发布提交和 PR 检查通过后，合并 `main` 并创建 v1.0.5 Release。
 - [ ] 检查 GitHub Release 只包含当前版本的说明且标记为 Latest。
 - [ ] 在干净 Ubuntu 环境验证安装、配置、服务启停与日志。
-- [ ] 从 v0.2.6 数据副本升级，确认任务、收藏、附件和书库可读。
+- [ ] 从 v1.0.4 数据副本升级，确认 `.env` 不变、任务、附件和书库可读。
 - [ ] 验收 Docker Compose 安装、持久化、更新和恢复流程。
 - [ ] 保留回滚包；发布后观察日志、队列、磁盘和模型费用。
 

@@ -6,8 +6,8 @@ import shutil
 import pypdfium2 as pdfium
 import pytest
 
-from render import RenderError, sanitize_math
-from render_service import render_artifacts_async
+from qqrobot.rendering.render import RenderError, sanitize_math
+from qqrobot.rendering.render_service import render_artifacts_async
 
 
 @pytest.mark.parametrize("formula", [
@@ -54,7 +54,7 @@ def test_failed_render_retains_diagnostics_without_partial_pdf(monkeypatch, tmp_
         (directory / "solution.pdf").write_bytes(b"partial PDF")
         raise RuntimeError("synthetic render failure")
 
-    monkeypatch.setattr("render_service.run_worker", fail_worker)
+    monkeypatch.setattr("qqrobot.rendering.render_service.run_worker", fail_worker)
     with pytest.raises(RenderError, match="synthetic render failure"):
         asyncio.run(render_artifacts_async({}, tmp_path, "Q261027-000012"))
     assert (tmp_path / "solution.tex").read_text(encoding="utf-8") == "synthetic invalid TeX"

@@ -45,7 +45,9 @@ if systemctl is-active --quiet qq-math-bot; then
   systemctl stop qq-math-bot
 fi
 if [[ "$SOURCE_DIR" != "$APP_DIR" ]]; then
-  install -m 644 "$SOURCE_DIR"/*.py "$SOURCE_DIR/requirements.txt" "$APP_DIR/"
+  install -m 644 "$SOURCE_DIR/requirements.txt" "$APP_DIR/"
+  install -m 644 "$SOURCE_DIR/VERSION" "$APP_DIR/"
+  cp -a "$SOURCE_DIR/qqrobot" "$APP_DIR/"
   cp -a "$SOURCE_DIR/skills" "$APP_DIR/"
 fi
 if [[ ! -f "$APP_DIR/.env" ]]; then
@@ -72,7 +74,7 @@ Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=PYTHONUNBUFFERED=1
 Environment=OPENBLAS_NUM_THREADS=1
 Environment=OMP_NUM_THREADS=1
-ExecStart=/usr/bin/env DATA_DIR=/opt/qq-math-bot/data /opt/qq-math-bot/.venv/bin/python /opt/qq-math-bot/task_bot.py
+ExecStart=/usr/bin/env DATA_DIR=/opt/qq-math-bot/data PYTHONPATH=/opt/qq-math-bot /opt/qq-math-bot/.venv/bin/python -m qqrobot
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true

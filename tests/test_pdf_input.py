@@ -6,9 +6,9 @@ import json
 from PIL import Image
 import pytest
 
-from pdf_tools import (PDFError, _select_pages, pdf_pages_from_text,
+from qqrobot.media.pdf_tools import (PDFError, _select_pages, pdf_pages_from_text,
                        pdf_task_page_budget, render_pdf)
-from render_service import render_input_pdf_batches_async
+from qqrobot.rendering.render_service import render_input_pdf_batches_async
 
 
 def colored_pdf(count=17):
@@ -156,7 +156,7 @@ def test_later_batch_worker_failure_is_reported_and_cleans_all_files(tmp_path, m
         return json.dumps({"preview_paths": paths, "total_pages": 8, "page_numbers": [1, 2, 3, 4],
                            "selected": True, "selection_count": 5}).encode()
 
-    monkeypatch.setattr("render_service.run_worker", worker)
+    monkeypatch.setattr("qqrobot.rendering.render_service.run_worker", worker)
 
     async def check():
         with pytest.raises(PDFError, match="第 5 页|超时"):
@@ -176,7 +176,7 @@ def test_cancelling_active_worker_cleans_up_input_and_partial_images(tmp_path, m
             started.set()
             await asyncio.Future()
 
-        monkeypatch.setattr("render_service.run_worker", worker)
+        monkeypatch.setattr("qqrobot.rendering.render_service.run_worker", worker)
         async with aclosing(render_input_pdf_batches_async(b"synthetic", tmp_path, "第1-5页")) as batches:
             pending = asyncio.create_task(anext(batches))
             await started.wait()

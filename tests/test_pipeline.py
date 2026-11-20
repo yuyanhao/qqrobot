@@ -6,11 +6,11 @@ import shutil
 import pytest
 import pypdfium2 as pdfium
 
-from ai import AIError
-from render import RenderError
-from render_service import render_artifacts_async, render_preview_async
-from solver import Solver
-from task_store import TaskStore
+from qqrobot.solving.ai import AIError
+from qqrobot.rendering.render import RenderError
+from qqrobot.rendering.render_service import render_artifacts_async, render_preview_async
+from qqrobot.solving.solver import InputError, Solver
+from qqrobot.tasks.task_store import TaskStore
 
 PHYSICS_PROBLEM = "一个质量为m的小球从H处释放，初速度向下v0（未知），原速率反弹后恰好与一个从H+h高度（h未知）静止释放的M在H处弹性碰撞，m再次从地面反弹后，又恰好在H高度与回落的M发生第二次碰撞，求v0和h"
 
@@ -33,7 +33,7 @@ def test_physics_text_and_extra_reach_solver_and_verifier(monkeypatch, tmp_path)
             raise AIError("模拟复核超时", "timeout", "复核")
     async def fake_render(doc, directory, tid):
         return {"total_pages": 6, "preview_paths": [], "plot_warnings": []}
-    monkeypatch.setattr("solver.render_artifacts_async", fake_render)
+    monkeypatch.setattr("qqrobot.solving.solver.render_artifacts_async", fake_render)
     config = SimpleNamespace(sympy=False, verify=True, search=False, solve_timeout=600, verify_timeout=300)
     store = TaskStore(tmp_path)
     task, _ = store.create("u", "m", "c2c", "u", {"text": PHYSICS_PROBLEM, "extra": "先说明碰撞前后正方向", "attachments": []})
@@ -46,10 +46,68 @@ def test_physics_text_and_extra_reach_solver_and_verifier(monkeypatch, tmp_path)
     store.close()
 
 
+def test_exhausted_job_budget_skips_verification_and_keeps_the_solution(monkeypatch, tmp_path):
+    class Clock:
+        now = 0.0
+
+        @classmethod
+        def monotonic(cls):
+            return cls.now
+
+    class FakeAI:
+        async def plan_problem(self, problem, extra):
+            return {"accepted": True, "domain": "math", "needs_search": False, "search_query": ""}
+
+        async def solve(self, problem, extra, *args):
+            Clock.now = 200.0
+            return solution()
+
+        async def verify(self, *args, **kwargs):
+            raise AssertionError("预算耗尽时不应启动复核")
+
+    async def fake_render(doc, directory, tid):
+        return {"total_pages": 2, "preview_paths": [], "plot_warnings": []}
+
+    monkeypatch.setattr("qqrobot.solving.solver.render_artifacts_async", fake_render)
+    monkeypatch.setattr("qqrobot.solving.solver.time", Clock)
+    config = SimpleNamespace(sympy=False, verify=True, search=False, solve_timeout=600,
+                             verify_timeout=300, job_timeout=150)
+    store = TaskStore(tmp_path)
+    try:
+        task, _ = store.create("u", "m", "c2c", "u", {"text": "求积分", "attachments": []})
+        asyncio.run(Solver(store, FakeAI(), config).run(task))
+        row = store.get(task["task_id"])
+        assert row["state"] == "completed"
+        assert row["result"]["verification"] == "未复核（总时间不足）"
+        assert row["result"]["answer_status"] == "complete"
+        assert Path(row["result"]["text_path"]).is_file()
+    finally:
+        store.close()
+
+
+def test_exhausted_budget_fails_before_calling_the_model(tmp_path):
+    class FakeAI:
+        async def plan_problem(self, problem, extra):
+            return {"accepted": True, "domain": "math", "needs_search": False, "search_query": ""}
+
+        async def solve(self, *args):
+            raise AssertionError("预算不足时不应调用模型")
+
+    config = SimpleNamespace(sympy=False, verify=False, search=False, solve_timeout=600,
+                             verify_timeout=300, job_timeout=60)
+    store = TaskStore(tmp_path)
+    try:
+        task, _ = store.create("u", "m", "c2c", "u", {"text": "求积分", "attachments": []})
+        with pytest.raises(InputError, match="时间预算不足"):
+            asyncio.run(Solver(store, FakeAI(), config).run(task))
+    finally:
+        store.close()
+
+
 def test_text_attachment_is_in_actual_problem(monkeypatch, tmp_path):
     async def download(*args, **kwargs):
         return SimpleNamespace(data="附件原题：求定积分".encode("utf-8"))
-    monkeypatch.setattr("solver.download_file", download)
+    monkeypatch.setattr("qqrobot.solving.solver.download_file", download)
     store = TaskStore(tmp_path)
     task, _ = store.create("u", "m", "c2c", "u", {"text": "请解附件", "attachments": [{"url": "https://example.com/p.txt", "name": "p.txt"}]})
     solver = Solver(store, None, SimpleNamespace())
@@ -69,7 +127,7 @@ def test_failed_pdf_keeps_text_and_reports_failed_render(monkeypatch, tmp_path):
     async def failed_render(doc, directory, tid):
         raise RenderError("synthetic compiler failure")
 
-    monkeypatch.setattr("solver.render_artifacts_async", failed_render)
+    monkeypatch.setattr("qqrobot.solving.solver.render_artifacts_async", failed_render)
     config = SimpleNamespace(sympy=False, verify=False, search=False, solve_timeout=600, verify_timeout=300)
     store = TaskStore(tmp_path)
     try:

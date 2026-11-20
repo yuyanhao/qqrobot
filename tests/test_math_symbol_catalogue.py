@@ -6,8 +6,8 @@ import shutil
 
 import pytest
 
-from render import _MATH_COMMANDS, RenderError, sanitize_math
-from render_service import render_artifacts_async
+from qqrobot.rendering.render import _MATH_COMMANDS, RenderError, sanitize_math
+from qqrobot.rendering.render_service import render_artifacts_async
 
 DATA = json.loads((Path(__file__).with_name("fixtures") / "standard-math-symbols.json").read_text(encoding="utf-8"))
 CATALOGUE = DATA["commands"]

@@ -7,8 +7,8 @@ import sys
 
 import pytest
 
-from ai import DeepSeek
-from settings import Settings, validate_environment
+from ai_fixtures import model_client
+from qqrobot.settings import Settings, validate_environment
 
 
 def test_settings_read_current_environment_and_preserve_explicit_overrides(monkeypatch):
@@ -80,7 +80,7 @@ def test_unverified_official_vision_model_warns_without_blocking(monkeypatch):
 def test_effort_normalizes_before_selecting_token_budget(monkeypatch):
     monkeypatch.delenv("SOLVE_MAX_TOKENS", raising=False)
     monkeypatch.delenv("VERIFY_MAX_TOKENS", raising=False)
-    client = DeepSeek("fake-key", "https://api.deepseek.com", "deepseek-flash", " MAX ")
+    client = model_client(reasoning_effort=" MAX ")
     try:
         assert client.reasoning_effort == "max" and client.solve_max_tokens == 131072
     finally:
@@ -90,7 +90,7 @@ def test_effort_normalizes_before_selecting_token_budget(monkeypatch):
 def test_cli_reports_invalid_configuration_without_network(monkeypatch):
     project = Path(__file__).resolve().parents[1]
     environment = {**os.environ, "VERIFY_SOLUTION": "synthetic-invalid-flag"}
-    result = subprocess.run([sys.executable, "-X", "utf8", "settings.py", "--allow-missing-credentials"],
+    result = subprocess.run([sys.executable, "-X", "utf8", "-m", "qqrobot.settings", "--allow-missing-credentials"],
                             cwd=project, env=environment, capture_output=True, timeout=10)
     assert result.returncode != 0
     output = (result.stdout + result.stderr).decode("utf-8")

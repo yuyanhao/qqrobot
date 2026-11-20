@@ -3,7 +3,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from process_tools import worker_environment
+from qqrobot.core.process_tools import worker_environment
 
 
 def test_real_client_starts_without_writing_sdk_log(tmp_path):
@@ -17,8 +17,8 @@ from pathlib import Path
 import sys
 
 os.environ.update(QQ_APPID="fake-app", QQ_SECRET="fake-secret", DEEPSEEK_API_KEY="fake-key")
-from task_bot import TaskBot
-from settings import Settings
+from qqrobot.tasks.task_bot import TaskBot
+from qqrobot.settings import Settings
 import botpy
 
 root = Path(sys.argv[1])
