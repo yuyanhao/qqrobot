@@ -288,7 +288,7 @@ class TaskStore:
             if state == "collecting":
                 draft = self.collecting(owner)
                 if draft:
-                    raise QueueFull(f"你已有收集中的题目 {draft['task_id']}，请继续补图或先开始、取消该题")
+                    raise QueueFull(f"你已有收集中题目 {draft['task_id']}，请先补图或开始。")
                 total = self.db.execute("SELECT count(*) FROM tasks WHERE state='collecting'").fetchone()[0]
                 if total >= max_active: raise QueueFull("收集题目已达到上限，请稍后再创建")
             else:
@@ -391,7 +391,7 @@ class TaskStore:
                 result.update(answer_status="uncertain", verification="未完成（服务重启中断）")
                 if result.get("solution"): result["solution"]["status"] = "uncertain"
                 self.update(task["task_id"], state="completed", result=result,
-                            error="服务重启，已保留文字解答；未自动重算，尚不能视为已解决。")
+                            error="服务重启：文字解答已保留，未重算。")
 
     def pending_book_ids(self, ttl_days):
         slots = ",".join("?" for _ in ACTIVE)
@@ -470,22 +470,54 @@ STATES = {"collecting": "收集中", "queued": "排队中", "reading": "读取�
           "completed": "已生成解答", "needs_input": "需要补充条件", "rejected": "不在解题范围",
           "failed": "处理失败", "cancelled": "已取消", "interrupted": "服务重启中断", "expired": "结果已过期"}
 
+# Chat lines stay short: only the reason category, never the full explanation.
+_VERIFICATION_SHORT = (
+    ("模型复核通过", "复核通过"),
+    ("复核发现问题并给出修订", "复核已修订"),
+    ("存在疑点", "有疑点"),
+    ("未进行复核", "未复核"),
+)
+
+
+def short_verification(text):
+    """Compress the review status for one-line chat and PDF status lines."""
+    text = " ".join(str(text or "").split())
+    if not text:
+        return ""
+    for prefix, short in _VERIFICATION_SHORT:
+        if text.startswith(prefix):
+            return short
+    match = re.match(r"未完成（([a-z_]+)）", text)
+    if match:
+        return "复核超时" if match.group(1) == "timeout" else f"复核未完成（{match.group(1)}）"
+    return text[:24]
+
 
 def describe(task):
     result = task["result"]
-    lines = [f"{task['task_id']}｜{STATES.get(task['state'], task['state'])}"]
+    tid = task["task_id"]
+    state = STATES.get(task["state"], task["state"])
     if task["state"] == "completed" and result.get("study_text"):
-        lines[0] = f"{task['task_id']}｜已生成{task['request']['action']}反馈"
+        state = f"已生成{task['request']['action']}反馈"
+    lines = [f"{tid} · {state}"]
+    details = []
+    if result.get("total_pages"):
+        details.append(f"{result['total_pages']} 页")
+    verification = short_verification(result.get("verification"))
+    if result.get("answer_status") == "uncertain":
+        details.append(verification or "有疑点")
+    elif verification:
+        details.append(verification)
+    if details:
+        lines.append(" · ".join(details))
     if task["state"] == "collecting":
         count = len(task["request"].get("attachments") or [])
-        lines.append(f"已收集 {count} 个附件，最多 12 个；尚未开始解题。")
-        lines.append(f"/补图 {task['task_id']}（同条消息附图片）")
-        lines.append(f"/解题 {task['task_id']}（收齐材料后解题）")
-        lines.append(f"/查错 {task['task_id']}（收齐材料后查错）")
-    if result.get("answer_status") == "uncertain": lines.append("结论：仍有疑点，不能视为已解决")
-    if result.get("verification"): lines.append("复核：" + result["verification"])
-    if result.get("total_pages"): lines.append(f"完整 PDF：{result['total_pages']} 页")
-    if task["error"]: lines.append(task["error"])
+        lines.append(f"材料 {count} 个（最多 12）。")
+        lines.append(f"/补图 {tid} 追加，/解题 {tid} 或 /查错 {tid} 开始。")
+    if task["error"]:
+        lines.append(task["error"])
     if task["state"] in ACTIVE:
-        lines.append(f"自提交起已过 {max(0,int((time.time()-task['created'])/60))} 分钟（含排队）")
+        elapsed = max(0, int((time.time() - task["created"]) / 60))
+        if elapsed:
+            lines.append(f"已用 {elapsed} 分钟")
     return "\n".join(lines)

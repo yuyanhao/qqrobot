@@ -107,20 +107,15 @@ class TaskQueue:
         return pdf_task_page_budget(pdfs, request.get("text") or "")
 
     def _registration_receipt(self, tid, action=None, request=None):
-        estimated = self._estimated_ocr_batches(request or {}) if request else 0
-        estimate = f"预计识图约 {estimated} 批（每批最多 4 页/图）。\n" if estimated else ""
         if action in STUDY_ACTIONS:
-            return f"已登记 {tid}，正在排队{action}。\n{estimate}完成后会回复文字，也可发送 {tid} 领取。"
-        return (f"已登记 {tid}。\n按顺序处理，单题运行最多 {self.settings.job_timeout//60} 分钟，排队另计。\n"
-                f"{estimate}直接发送 {tid} 可查询进度或领取结果。\n"
-                "完成后：1–3 页发全部图片，超过 3 页发完整 PDF。解答和复核状态会分别标明。\n"
-                "发送 /帮助 查看机器人全部可用指令")
+            return f"已登记 {tid}。\n正在{action}，请稍候…"
+        return f"已登记 {tid}。\n正在解题，请稍候…"
 
     async def _create_collection(self, context, text, quoted, attachments, *, parent_id=""):
         if parent_id:
             parent = self.store.get(parent_id, context.owner)
             if not parent or parent["state"] == "expired":
-                await self._text(context, "未找到你在本会话中可用的原题号，请核对后再收集补充材料。")
+                await self._text(context, "未找到可用的原题号。")
                 return
         if len(text) + len(quoted) > 24000:
             await self._text(context, "收集材料超过 2.4 万字符，请按题目拆分。")
@@ -129,7 +124,7 @@ class TaskQueue:
             has_pdf = any(_is_pdf(item) for item in attachments)
             selection, remaining_text = split_pdf_selection(text) if has_pdf else ("", text)
             if has_pdf and not selection:
-                raise PDFError(f"附带 PDF 时请明确指定页码；每份 PDF 每次最多读取 {MAX_INPUT_PAGES} 页，例如“第3页”或“第3-5页”。")
+                raise PDFError(f"PDF 请写明页码（每份最多 {MAX_INPUT_PAGES} 页），如“第3页”。")
         except PDFError as exc:
             await self._text(context, str(exc))
             return
@@ -156,17 +151,18 @@ class TaskQueue:
                 # Persist this before the first reply: a concurrent /解题 or
                 # restart must not submit only the text while photos are pending.
                 self.store.update(tid, error="首批附件未保存，请重新发送这些附件后再开始。")
-            await self._text(context, f"已登记 {tid}，正在收集材料，暂未处理。\n"
-                             f"每条发送 /补图 {tid} 并附图片；收齐后发送 /解题 {tid} 或 /查错 {tid}。\n"
-                             "每条最多 4 个附件，累计最多 12 个。\n发送 /帮助 查看机器人全部可用指令")
+            await self._command_choices(
+                context,
+                f"已登记 {tid}。\n/补图 {tid} 附材料，收齐后发 /解题 {tid} 或 /查错 {tid}。",
+                [(tid, tid)])
             if attachments:
                 try:
                     updated, added = await self._save_collection_materials(
                         context, task, remaining_text, "", attachments, selection=selection)
                 except (InputCacheError, ValueError) as exc:
-                    await self._text(context, f"{tid} 首批附件未保存：{exc}\n请用 /补图 {tid} 重新发送这些附件后再开始。")
+                    await self._text(context, f"{tid} 附件未保存：{exc}\n请重发附件。")
                     return
-                await self._text(context, f"{tid} 已保存本次材料（新增 {added} 个附件）。\n" + describe(updated))
+                await self._text(context, f"{tid} 已存 {added} 个附件。\n" + describe(updated))
 
     async def _save_collection_materials(self, context, task, text, quoted, attachments, *, selection=None):
         """Save one batch while the caller holds collection_lock."""
@@ -205,7 +201,7 @@ class TaskQueue:
 
     async def _append_collection(self, context, tid, text, quoted, attachments):
         if not text and not quoted and not attachments:
-            await self._text(context, f"请在 /补图 {tid} 同一条消息中附上图片。QQ 未提供引用图片时请重新发送原图。")
+            await self._text(context, f"/补图 {tid} 请同条附图片；引用失败请重发原图。")
             return
         async with self.collection_lock:
             task = self.store.get(tid, context.owner)
@@ -215,23 +211,23 @@ class TaskQueue:
             try:
                 updated, added = await self._save_collection_materials(context, task, text, quoted, attachments)
             except (InputCacheError, ValueError) as exc:
-                await self._text(context, f"{tid} 材料未追加：{exc}\n原有材料仍保留，可继续 /补图。")
+                await self._text(context, f"{tid} 未追加：{exc}；材料仍保留，可继续 /补图。")
                 return
-        await self._text(context, f"{tid} 已保存本次材料（新增 {added} 个附件）。\n" + describe(updated))
+        await self._text(context, f"{tid} 已存 {added} 个附件。\n" + describe(updated))
 
     async def _start_collection_check(self, context, task, tail, attachments):
         tid = task["task_id"]
         if attachments:
-            await self._text(context, f"查错材料请先用 /补图 {tid} 追加，再发 /查错 {tid}。")
+            await self._text(context, f"先 /补图 {tid} 追加，再发 /查错 {tid}。")
             return
         current = self.store.get(tid, context.owner)
         if not current or current["state"] != "collecting":
-            await self._text(context, f"{tid} 已开始或不在收集状态，请按题号查询进度。")
+            await self._text(context, f"{tid} 不在收集状态。")
             return
         request = dict(current["request"])
         items = list(request.get("attachments") or [])
         if not items:
-            await self._text(context, f"{tid} 还没有材料，请先发送 /补图 {tid} 并附图片或 PDF。")
+            await self._text(context, f"{tid} 还没材料：发 /补图 {tid} 附图片或 PDF。")
             return
 
         parent = None
@@ -242,15 +238,14 @@ class TaskQueue:
             else:
                 await self._text(
                     context,
-                    "关联的原题还没有可用题干或已过期；请等识题完成后再 /查错，"
-                    f"或 /取消 {tid} 后重新 /收集。")
+                    "关联原题还没有题干或已过期：等识题完成后再 /查错。")
                 return
         if parent:
             if tail:
-                await self._text(context, "该收集已关联原题，材料会自动按草稿处理；不需要再指定角色。")
+                await self._text(context, "已关联原题，材料按草稿处理。")
                 return
             if parent["question_ocr"].get("needs_confirmation"):
-                await self._text(context, f"原题识图有疑点，请先发 /题干 {parent['task_id']} 核对。")
+                await self._text(context, f"原题识图有疑点：先 /题干 {parent['task_id']} 核对。")
                 return
             problem_snapshot = study_problem(parent["problem"], parent["request"])
             question_ocr = parent["question_ocr"]
@@ -279,12 +274,12 @@ class TaskQueue:
                     return
             problem_snapshot, question_ocr = "", {}
             if not any(role in ("question", "both") for role in roles):
-                await self._text(context, f"{tid} 没有识别到题目材料；请用 /查错 {tid} 1题 2-4稿 指定。")
+                await self._text(context, f"{tid} 没识别到题目：/查错 {tid} 1题 2-4稿 指定。")
                 return
             if not any(role in ("draft", "both") for role in roles):
                 await self._text(
                     context,
-                    f"{tid} 没有识别到草稿材料；如果题目和作答在同一张图，请用 /查错 {tid} 1同页 指定。")
+                    f"{tid} 没识别到草稿：同页请用 /查错 {tid} 1同页。")
                 return
 
         question_items = [item for item, role in zip(items, roles) if role in ("question", "both")]
@@ -325,10 +320,10 @@ class TaskQueue:
             try:
                 data = read_cached_attachment(self.store, task, item)
             except (InputCacheError, ValueError) as exc:
-                await self._text(context, f"{tid} 第 {index + 1} 份材料校验失败：{exc}。请重新 /补图。")
+                await self._text(context, f"{tid} 第 {index + 1} 份校验失败：{exc}")
                 return None, ""
             if data is None:
-                await self._text(context, f"{tid} 第 {index + 1} 份材料没有本地缓存，请重新 /补图。")
+                await self._text(context, f"{tid} 第 {index + 1} 份无缓存：请 /补图 重发。")
                 return None, ""
             try:
                 if _is_pdf(item):
@@ -355,10 +350,10 @@ class TaskQueue:
                 await self._text(context, f"{tid} 第 {index + 1} 份 PDF 无法读取：{exc}")
                 return None, ""
             except Exception:
-                await self._text(context, f"{tid} 第 {index + 1} 份材料无法识别，请重新发送。")
+                await self._text(context, f"{tid} 第 {index + 1} 份无法识别，请重发。")
                 return None, ""
         if not images:
-            await self._text(context, f"{tid} 里没有可识别的题目图片，请先 /补图 发送题目图。")
+            await self._text(context, f"{tid} 没有题目图：先 /补图。")
             return None, ""
 
         recognized = {}
@@ -370,13 +365,12 @@ class TaskQueue:
             except AIError as exc:
                 await self._text(
                     context,
-                    f"{tid} 自动识别材料失败 [{exc.code}]；"
-                    f"请用 /查错 {tid} 1题 2-4稿 指定角色。")
+                    f"{tid} 识别材料失败 [{exc.code}]：/查错 {tid} 1题 2-4稿。")
                 return None, ""
             except Exception:
                 await self._text(
                     context,
-                    f"{tid} 自动识别材料失败；请用 /查错 {tid} 1题 2-4稿 指定角色。")
+                    f"{tid} 识别材料失败：/查错 {tid} 1题 2-4稿。")
                 return None, ""
             for position, role in zip(batch_positions, result["roles"]):
                 recognized[position] = role
@@ -386,33 +380,32 @@ class TaskQueue:
         if unknown:
             await self._text(
                 context,
-                f"{tid} 无法判断第 {'、'.join(unknown)} 份材料的角色；"
-                f"请用 /查错 {tid} 1题 2-4稿 指定。")
+                f"{tid} 无法判断第 {'、'.join(unknown)} 份角色：/查错 {tid} 1题 2-4稿。")
             return None, ""
         roles = ["draft"] * len(items)
         for position, role in recognized.items():
             roles[position] = role
         if not any(role in ("question", "both") for role in roles):
-            await self._text(context, f"{tid} 没有识别到题目材料；请用 /查错 {tid} 1题 2-4稿 指定。")
+            await self._text(context, f"{tid} 没识别到题目：/查错 {tid} 1题 2-4稿 指定。")
             return None, ""
         if not any(role in ("draft", "both") for role in roles):
             await self._text(
                 context,
-                f"{tid} 没有识别到草稿材料；如果题目和作答在同一张图，请用 /查错 {tid} 1同页 指定。")
+                f"{tid} 没识别到草稿：同页请用 /查错 {tid} 1同页。")
             return None, ""
         return roles, "已自动识别材料角色。"
 
     async def _start_collection(self, context, tid, *, request=None, note=""):
         async with self.collection_lock:
             if self.queue.full():
-                await self._text(context, f"队列已满，{tid} 的材料仍保留，请稍后再发 /解题 {tid} 或 /查错 {tid}。")
+                await self._text(context, f"队列已满，{tid} 材料保留，稍后再发 /解题 {tid}。")
                 return
             current = self.store.get(tid, context.owner)
             if current is None:
-                await self._text(context, "未找到你在本会话中的这个题号。")
+                await self._text(context, "未找到该题号。")
                 return
             if current["state"] != "collecting":
-                await self._text(context, f"{tid} 已开始或不在收集状态，请按题号查询进度。")
+                await self._text(context, f"{tid} 不在收集状态。")
                 return
             snapshot = current["request"]
             effective = request if request is not None else snapshot
@@ -430,7 +423,7 @@ class TaskQueue:
                 return
             self.contexts[tid] = context
             receipt = self._registration_receipt(tid, task["request"].get("action"), task["request"])
-            await self._text(context, (note + "\n" + receipt) if note else receipt)
+            await self._command_choices(context, (note + "\n" + receipt) if note else receipt, [(tid, tid)])
             try:
                 self.queue.put_nowait(tid)
             except asyncio.QueueFull:
@@ -441,7 +434,7 @@ class TaskQueue:
                         self.store.update_collection_request(tid, context.owner, snapshot)
                     except ValueError:
                         pass
-                await self._text(context, f"队列暂满，材料已保留，请稍后再发 /解题 {tid} 或 /查错 {tid}。")
+                await self._text(context, f"队列已满，材料保留，稍后再发 /解题 {tid}。")
 
     async def _submit(self, context, request):
         try:
@@ -451,7 +444,7 @@ class TaskQueue:
             return
         self.store.cleanup(self.settings.result_ttl)
         if self.store.disk_bytes() >= self.settings.disk_limit_mb * 1024**2:
-            await self._text(context, "结果存储已达到容量预算，请管理员清理过期文件或调整预算。")
+            await self._text(context, "存储已满，请联系管理员清理。")
             return
         try:
             task, created = self.store.create(context.owner, context.message_id, context.kind, context.target,
@@ -468,7 +461,8 @@ class TaskQueue:
             return
         self.contexts[tid] = context
         # Acknowledge before allowing a fast task to consume this message's reply sequence.
-        await self._text(context, self._registration_receipt(tid, request.get("action"), request))
+        await self._command_choices(
+            context, self._registration_receipt(tid, request.get("action"), request), [(tid, tid)])
         try:
             self.queue.put_nowait(tid)
         except asyncio.QueueFull:
@@ -504,16 +498,16 @@ class TaskQueue:
                     self.running_task.cancel()
                 cancelled.append(item["task_id"])
         if not cancelled:
-            await self._text(context, "该题当前没有运行中的任务。")
+            await self._text(context, "没有运行中的任务。")
             return
         await self._text(context, "已取消：" + "、".join(cancelled) + "。")
 
     async def _retry_task(self, context, task):
         tid = task["task_id"]
         if task["state"] == "collecting":
-            await self._text(context, f"这道题尚未开始解答，请发 /解题 {tid} 或 /查错 {tid}，无需重试。")
+            await self._text(context, f"还没开始：发 /解题 {tid} 或 /查错 {tid}。")
         elif task["state"] in ACTIVE:
-            await self._text(context, "该题仍在处理中，无需重复提交。")
+            await self._text(context, "还在处理中，无需重复提交。")
         elif task["state"] == "expired":
             await self._text(context, "题目材料已过期，请重新发送。")
         elif task["request"].get("action") == "提示":

@@ -159,7 +159,7 @@ class TaskBot(TaskCommands, TaskQueue, TaskDelivery, botpy.Client):
             await self._dispatch_command(context, text, quoted, attachments, quoted_urls=quoted_urls)
         except Exception as exc:
             log.warning("message_handler_failed event=%s type=%s", message.id, type(exc).__name__, exc_info=True)
-            await self._text(context, "消息处理遇到内部错误。若已收到题号请用题号查询；否则请稍后重新发送。")
+            await self._text(context, "内部错误：有题号请发题号查询，否则请重发。")
 
     async def shutdown(self):
         if self.cleanup_task:

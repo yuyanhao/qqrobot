@@ -71,7 +71,7 @@ def test_overall_timeout_preserves_draft_for_new_query(tmp_path):
         async def text(context, value): sent.append((context.message_id, value)); return True
         bot._text = text
         await bot._deliver(row, ReplyContext('c2c', 'u', 'u', 'new-query', time.time()), 'PDF')
-        assert sent[0][0] == 'new-query' and '没有可用 PDF' in sent[0][1]
+        assert sent[0][0] == 'new-query' and '暂无 PDF' in sent[0][1]
         assert '已经完成的推导' in Path(row['result']['text_path']).read_text(encoding='utf-8')
         await stop_worker(worker)
         bot.store.close()

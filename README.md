@@ -4,7 +4,7 @@
 ![Release](https://img.shields.io/github/v/release/yuyanhao/qqrobot)
 ![License](https://img.shields.io/github/license/yuyanhao/qqrobot)
 
-当前代码版本：**v1.0.0**。变更内容见 [CHANGELOG.md](CHANGELOG.md)。
+当前代码版本：**v1.0.1**。变更内容见 [CHANGELOG.md](CHANGELOG.md)。
 
 `VERSION` 保存版本号；主分支更新此文件时，发布流程会创建对应 Git 标签和 GitHub Release。
 
@@ -121,8 +121,8 @@ docker compose logs --tail=100
 | `SEARCH_ENABLED` | `true` | 解题流程按需搜索，复用模型密钥 |
 | `PDF_INPUT_MAX_PAGES` / `PDF_TASK_MAX_PAGES` | `5` / `5` | 单份 PDF 页数上限与单任务合计页数上限；合法配置范围均为 1–5 页；每份待读取 PDF 均须明确指定页码 |
 | `BOOK_MAX_PDF_MB` / `BOOK_LIBRARY_MAX_MB` | `100` / `1024` | 管理员书库单份 PDF 与书库总容量上限 |
-| `TASK_TIMEOUT` | `1200` | 单题总预算，秒；不含排队和交付 |
-| `SOLVE_TIMEOUT` / `VERIFY_TIMEOUT` | `600` / `300` | 单次解题与复核上限，秒，仍受总预算约束 |
+| `TASK_TIMEOUT` | `1800` | 单题总预算，秒；不含排队和交付 |
+| `SOLVE_TIMEOUT` / `VERIFY_TIMEOUT` | `900` / `600` | 单次解题与复核上限，秒，仍受总预算约束 |
 | `VERIFY_SOLUTION` / `SYMPY_ENABLED` | `true` / `true` | 模型复核与符号计算 |
 | `ACTIVE_DELIVERY` | `false` | 是否尝试主动发送，需要实际 QQ 权限 |
 | `MAX_QUEUE` / `MAX_USER_TASKS` | `5` / `2` | 全局与单会话单用户的未完成任务上限 |
@@ -168,21 +168,21 @@ python -m pytest -q
 
 ## 更新
 
-先等待当前任务完成，停止旧、新 systemd 服务并备份实际 `.env`、代码和数据目录。停止服务可确保 SQLite WAL 与附件一起保持一致。正式发布标签为 v1.0.0。
+先等待当前任务完成，停止旧、新 systemd 服务并备份实际 `.env`、代码和数据目录。停止服务可确保 SQLite WAL 与附件一起保持一致。正式发布标签为 v1.0.1。
 
 ```bash
 cd /opt/qq-math-bot
 sudo systemctl stop qqbot || true
 sudo systemctl stop qq-math-bot || true
 stamp=$(date +%Y%m%d-%H%M%S)
-sudo tar -czf "/root/qq-math-bot-before-v1.0.0-$stamp.tar.gz" -C /opt/qq-math-bot .env data
-sudo tar -czf "/root/qq-math-bot-code-before-v1.0.0-$stamp.tar.gz" -C /opt/qq-math-bot --exclude=data --exclude=.env .
+sudo tar -czf "/root/qq-math-bot-before-v1.0.1-$stamp.tar.gz" -C /opt/qq-math-bot .env data
+sudo tar -czf "/root/qq-math-bot-code-before-v1.0.1-$stamp.tar.gz" -C /opt/qq-math-bot --exclude=data --exclude=.env .
 cd /tmp
-curl -fL https://github.com/yuyanhao/qqrobot/archive/refs/tags/v1.0.0.tar.gz -o qqrobot-v1.0.0.tar.gz
-rm -rf qqrobot-v1.0.0
-mkdir -p qqrobot-v1.0.0
-tar -xzf qqrobot-v1.0.0.tar.gz --strip-components=1 -C qqrobot-v1.0.0
-cd qqrobot-v1.0.0
+curl -fL https://github.com/yuyanhao/qqrobot/archive/refs/tags/v1.0.1.tar.gz -o qqrobot-v1.0.1.tar.gz
+rm -rf qqrobot-v1.0.1
+mkdir -p qqrobot-v1.0.1
+tar -xzf qqrobot-v1.0.1.tar.gz --strip-components=1 -C qqrobot-v1.0.1
+cd qqrobot-v1.0.1
 sudo bash setup.sh
 sudo -u qqbot /opt/qq-math-bot/.venv/bin/python /opt/qq-math-bot/qq_panel.py --apply
 ```
@@ -193,20 +193,20 @@ Docker 更新在现有 Compose 项目目录执行；`.env` 由 Compose 的 `env_
 
 ```bash
 cd /path/to/qqrobot
-cp .env "/root/qqbot-env-before-v1.0.0-$(date +%Y%m%d-%H%M%S)"
+cp .env "/root/qqbot-env-before-v1.0.1-$(date +%Y%m%d-%H%M%S)"
 docker compose stop
 volume="$(docker volume ls -q --filter label=com.docker.compose.volume=qqbot-data | head -n 1)"
 test -n "$volume"
-backup="qqbot-data-before-v1.0.0-$(date +%Y%m%d-%H%M%S).tar.gz"
+backup="qqbot-data-before-v1.0.1-$(date +%Y%m%d-%H%M%S).tar.gz"
 docker run --rm -v "$volume:/data:ro" -v "$PWD:/backup" alpine:3.22 \
   tar -czf "/backup/$backup" -C /data .
 git fetch --tags
-git checkout v1.0.0
+git checkout v1.0.1
 docker compose up -d --build
 docker compose exec qqbot python qq_panel.py --apply
 ```
 
-不要执行 `docker compose down -v`，它会删除数据卷。发布页为 `https://github.com/yuyanhao/qqrobot/releases/tag/v1.0.0`，源码归档地址为 `https://github.com/yuyanhao/qqrobot/archive/refs/tags/v1.0.0.tar.gz`；使用 Git 仓库目录部署时，正式发布后可执行 `git checkout v1.0.0`。
+不要执行 `docker compose down -v`，它会删除数据卷。发布页为 `https://github.com/yuyanhao/qqrobot/releases/tag/v1.0.1`，源码归档地址为 `https://github.com/yuyanhao/qqrobot/archive/refs/tags/v1.0.1.tar.gz`；使用 Git 仓库目录部署时，正式发布后可执行 `git checkout v1.0.1`。
 
 `update_delivery.sh` 和 `update_pdf_input.sh` 已停用，避免旧代码覆盖当前版本的安全限制。`update_search.sh` 仅用于旧版搜索迁移；新部署请使用完整安装包和 `setup.sh`。`repair_pdf.sh` 只重排已保存的解答，不处理输入 PDF。
 

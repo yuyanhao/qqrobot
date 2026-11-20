@@ -51,9 +51,9 @@ def https_url(name, default, *, origin_only=False):
 @dataclass
 class Settings:
     data_dir: Path = field(default_factory=lambda: Path(os.getenv("DATA_DIR", str(Path(__file__).with_name("data")))))
-    job_timeout: int = field(default_factory=lambda: number("TASK_TIMEOUT", 1200, 120, 1800))
-    solve_timeout: int = field(default_factory=lambda: number("SOLVE_TIMEOUT", 600, 60, 1200))
-    verify_timeout: int = field(default_factory=lambda: number("VERIFY_TIMEOUT", 300, 30, 600))
+    job_timeout: int = field(default_factory=lambda: number("TASK_TIMEOUT", 1800, 120, 1800))
+    solve_timeout: int = field(default_factory=lambda: number("SOLVE_TIMEOUT", 900, 60, 1200))
+    verify_timeout: int = field(default_factory=lambda: number("VERIFY_TIMEOUT", 600, 30, 600))
     verify: bool = field(default_factory=lambda: flag("VERIFY_SOLUTION", True))
     sympy: bool = field(default_factory=lambda: flag("SYMPY_ENABLED", True))
     search: bool = field(default_factory=lambda: flag("SEARCH_ENABLED", True))

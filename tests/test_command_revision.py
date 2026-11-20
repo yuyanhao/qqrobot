@@ -212,7 +212,7 @@ def test_check_draft_pdf_requires_an_explicit_page_selection(tmp_path):
     try:
         asyncio.run(bot._dispatch_command(context(), "/查错 我令 t=x", "", [question, draft]))
         assert bot.queue.empty()
-        assert any("明确指定页码" in item[1] for item in bot.media.sent if item[0] == "text")
+        assert any("写明页码" in item[1] for item in bot.media.sent if item[0] == "text")
     finally:
         bot.store.close()
 
@@ -225,7 +225,7 @@ def test_check_rejects_quoted_question_pdf_without_page_selection(tmp_path):
             context(), "/查错 我令 t=x", "引用题面", [question],
             quoted_urls={question["url"]}))
         assert bot.queue.empty()
-        assert any("明确指定页码" in item[1] for item in bot.media.sent if item[0] == "text")
+        assert any("写明页码" in item[1] for item in bot.media.sent if item[0] == "text")
     finally:
         bot.store.close()
 

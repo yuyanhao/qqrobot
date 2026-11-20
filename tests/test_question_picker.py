@@ -125,7 +125,7 @@ def test_explicit_question_id_still_executes_the_original_command(tmp_path):
     try:
         tid = add_task(bot.store, "own")
         asyncio.run(dispatch(bot, f"/进度 {tid}"))
-        assert bot.media.sent[0][1].startswith(f"{tid}｜")
+        assert bot.media.sent[0][1].startswith(f"{tid} · ")
         assert "最近" not in bot.media.sent[0][1]
         asyncio.run(dispatch(bot, f"/进度 {tid}", owner="group:g:bob", event="foreign"))
         assert "未找到" in bot.media.sent[-1][1]

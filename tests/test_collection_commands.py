@@ -268,7 +268,7 @@ def test_duplicate_photo_is_acknowledged_as_saved_with_zero_additions(tmp_path, 
             await handle(bot, f"/补图 {tid}", "duplicate-photo", [attachment(1, token)])
             assert len(bot.store.get(tid)["request"]["attachments"]) == 1
             assert bot.queue.empty()
-            assert "已保存" in bot.media.sent[-1] and "新增 0" in bot.media.sent[-1]
+            assert "已存 0 个附件" in bot.media.sent[-1]
             assert "材料未追加" not in bot.media.sent[-1]
             assert calls == ([1] if not token else [1, 1])
         finally:

@@ -46,6 +46,36 @@ def test_physics_text_and_extra_reach_solver_and_verifier(monkeypatch, tmp_path)
     store.close()
 
 
+def test_exhausted_job_budget_skips_verification_and_keeps_the_solution(monkeypatch, tmp_path):
+    class FakeAI:
+        async def plan_problem(self, problem, extra):
+            return {"accepted": True, "domain": "math", "needs_search": False, "search_query": ""}
+
+        async def solve(self, problem, extra, *args):
+            return solution()
+
+        async def verify(self, *args, **kwargs):
+            raise AssertionError("预算耗尽时不应启动复核")
+
+    async def fake_render(doc, directory, tid):
+        return {"total_pages": 2, "preview_paths": [], "plot_warnings": []}
+
+    monkeypatch.setattr("solver.render_artifacts_async", fake_render)
+    config = SimpleNamespace(sympy=False, verify=True, search=False, solve_timeout=600,
+                             verify_timeout=300, job_timeout=60)
+    store = TaskStore(tmp_path)
+    try:
+        task, _ = store.create("u", "m", "c2c", "u", {"text": "求积分", "attachments": []})
+        asyncio.run(Solver(store, FakeAI(), config).run(task))
+        row = store.get(task["task_id"])
+        assert row["state"] == "completed"
+        assert row["result"]["verification"] == "未复核（总时间不足）"
+        assert row["result"]["answer_status"] == "complete"
+        assert Path(row["result"]["text_path"]).is_file()
+    finally:
+        store.close()
+
+
 def test_text_attachment_is_in_actual_problem(monkeypatch, tmp_path):
     async def download(*args, **kwargs):
         return SimpleNamespace(data="附件原题：求定积分".encode("utf-8"))

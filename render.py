@@ -35,6 +35,56 @@ def display_problem_text(text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
+_PAGE_FURNITURE_ENV = re.compile(
+    r"[ \t]*\\begin\{(flushright|center)\}(.*?)\\end\{\1\}[ \t]*\r?\n?", re.S)
+_PAGE_FURNITURE_LINE = re.compile(
+    r"(?mi)^[ \t]*(?:"
+    r"第\s*\d{1,4}\s*页(?:\s*[/／、，,]?\s*共\s*\d{1,4}\s*页)?"
+    r"|(?:page|p\.)\s*\d{1,4}(?:\s*(?:of|/)\s*\d{1,4})?"
+    r"|\d{1,4}\s*/\s*\d{1,4}"
+    r"|[•·●▪]\s*\d{1,4}(?:\s*[•·●▪])?"
+    r"|\d{1,4}\s*[•·●▪]"
+    r"|[-–—]\s*\d{1,4}\s*[-–—]"
+    r")[ \t]*(?=\r?\n|\Z)\r?\n?"
+)
+_PAGE_NUMBER_LINE = re.compile(r"[ \t]*\d{1,4}[ \t]*")
+
+
+def _is_page_furniture_block(content: str) -> bool:
+    """True when a flushright/center block only carries a page number."""
+    body = re.sub(r"\\[A-Za-z]+", "", content)
+    body = re.sub(r"[\\\s{}•·●▪~|/\-–—]+", "", body)
+    return body == "" or body.isdigit()
+
+
+def strip_page_furniture(text: str) -> str:
+    """Drop page numbers, running heads and footers copied from the source page.
+
+    The vision model is asked for a complete transcription, so printed page
+    furniture can land in the problem text (typically a ``flushright`` block
+    such as ``\\textbullet\\ 42 \\textbullet``). Those fragments fail the LaTeX
+    whitelist and used to force the whole document into source-text mode.
+    Only page-furniture shaped fragments are removed; content is untouched.
+    """
+    text = str(text or "")
+    if not text.strip():
+        return text
+    text = _PAGE_FURNITURE_ENV.sub(
+        lambda match: "\n" if _is_page_furniture_block(match.group(2)) else match.group(0), text)
+    text = _PAGE_FURNITURE_LINE.sub("", text)
+    lines = text.splitlines()
+    numbered = [index for index, line in enumerate(lines) if line.strip()]
+    if len(numbered) > 1:
+        for index in {numbered[0], numbered[-1]}:
+            if _PAGE_NUMBER_LINE.fullmatch(lines[index]) and sum(
+                    bool(line.strip()) for line in lines) > 1:
+                lines[index] = ""
+    text = "\n".join(lines)
+    text = re.sub(r"[ \t]+\r?\n", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
 def escape_text(text: str) -> str:
     text = re.sub(r"[\x00-\x08\x0b-\x1f\u2028\u2029]", " ", text or "")
     text = "".join(_SPECIAL.get(ch, ch) for ch in (text or ""))
@@ -56,7 +106,7 @@ biggl biggr Biggl Biggr alpha beta gamma delta epsilon varepsilon zeta eta theta
 vartheta iota kappa lambda mu nu xi pi varpi rho varrho sigma varsigma tau upsilon
 phi varphi chi psi omega Gamma Delta Theta Lambda Xi Pi Sigma Upsilon Phi Psi Omega
 mathbb mathcal mathfrak mathrm mathbf mathit mathsf mathtt mathnormal boldsymbol bm
-operatorname text textrm textbf textit overline underline overbrace underbrace
+operatorname text textrm textbf textit textbullet overline underline overbrace underbrace
 widehat widetilde hat tilde bar vec dot ddot dddot acute grave breve check boxed
 phantom hphantom vphantom quad qquad enspace thinspace medspace thickspace
 displaystyle textstyle scriptstyle scriptscriptstyle limits nolimits underset
@@ -309,10 +359,27 @@ def _wrap_bare_latex(text: str) -> str:
     return "".join(out)
 
 
-def render_rich(text: str, display_fallback: bool = False) -> str:
+def _math_source_fallback(source: str) -> str:
+    """Keep one rejected formula as readable source instead of failing the page."""
+    return "{\\small " + escape_text(source) + "}"
+
+
+def _math_payload(inner: str, display: bool, notes) -> str:
+    """Sanitize one formula; when ``notes`` is a list a rejected formula degrades alone."""
+    try:
+        body = sanitize_math(inner)
+    except RenderError as exc:
+        if notes is None:
+            raise
+        notes.append(str(exc))
+        return _math_source_fallback(inner)
+    return ("\\[\n" + body + "\n\\]") if display else ("\\(" + body + "\\)")
+
+
+def render_rich(text: str, display_fallback: bool = False, *, notes=None) -> str:
     text = _wrap_bare_latex(text or "")
     if not _MATH_TOKEN.search(text) and display_fallback and _looks_like_math(text):
-        return "\\[\n" + sanitize_math(text) + "\n\\]"
+        return _math_payload(text, True, notes)
 
     out: list[str] = []
     buffer: list[str] = []
@@ -328,14 +395,14 @@ def render_rich(text: str, display_fallback: bool = False) -> str:
             end = text.find("$$", i + 2)
             if end >= 0:
                 flush()
-                out.append("\\[\n" + sanitize_math(text[i + 2 : end]) + "\n\\]")
+                out.append(_math_payload(text[i + 2 : end], True, notes))
                 i = end + 2
                 continue
         if text.startswith(r"\[", i):
             end = text.find(r"\]", i + 2)
             if end >= 0:
                 flush()
-                out.append("\\[\n" + sanitize_math(text[i + 2 : end]) + "\n\\]")
+                out.append(_math_payload(text[i + 2 : end], True, notes))
                 i = end + 2
                 continue
         if text.startswith(r"\(", i):
@@ -343,14 +410,14 @@ def render_rich(text: str, display_fallback: bool = False) -> str:
             if end >= 0:
                 inner = text[i + 2 : end].replace(r"\(", "").replace(r"\)", "")
                 flush()
-                out.append("\\(" + sanitize_math(inner) + "\\)")
+                out.append(_math_payload(inner, False, notes))
                 i = end + 2
                 continue
         if text[i] == "$":
             end = text.find("$", i + 1)
             if end >= 0:
                 flush()
-                out.append("\\(" + sanitize_math(text[i + 1 : end]) + "\\)")
+                out.append(_math_payload(text[i + 1 : end], False, notes))
                 i = end + 1
                 continue
         buffer.append(text[i])
@@ -360,29 +427,35 @@ def render_rich(text: str, display_fallback: bool = False) -> str:
     return "".join(out)
 
 
-def render_inline(text: str) -> str:
-    return render_rich(text, display_fallback=False)
+def render_inline(text: str, *, notes=None) -> str:
+    return render_rich(text, display_fallback=False, notes=notes)
 
 
-def render_field(text: str, display: bool = False) -> str:
+def render_field(text: str, display: bool = False, *, notes=None) -> str:
     text = text or ""
     if not _MATH_TOKEN.search(text) and _looks_like_math(text):
-        inner = sanitize_math(text)
-        return ("\\[\n" + inner + "\n\\]") if display else ("\\(" + inner + "\\)")
-    return render_rich(text, display_fallback=False)
+        return _math_payload(text, display, notes)
+    return render_rich(text, display_fallback=False, notes=notes)
 
 
-def render_math(math: str) -> str:
-    math = sanitize_math(math)
-    if not math:
+def render_math(math: str, *, notes=None) -> str:
+    try:
+        body = sanitize_math(math)
+    except RenderError as exc:
+        if notes is None:
+            raise
+        notes.append(str(exc))
+        return _math_source_fallback(math)
+    if not body:
         return ""
-    if "\\begin{" not in math and ("&" in math or "\\\\" in math):
-        math = "\\begin{aligned}" + math + "\\end{aligned}"
-    return "\\[\n" + math + "\n\\]"
+    if "\\begin{" not in body and ("&" in body or "\\\\" in body):
+        body = "\\begin{aligned}" + body + "\\end{aligned}"
+    return "\\[\n" + body + "\n\\]"
 
 
-def _header(title: str, fontsize: str = "11pt", margin: str = "1.7cm", *, plain=False) -> str:
-    title_tex = escape_text(title) if plain else render_inline(title)
+def _header(title: str, fontsize: str = "11pt", margin: str = "1.7cm", *, plain=False,
+            notes=None) -> str:
+    title_tex = escape_text(title) if plain else render_inline(title, notes=notes)
     return rf"""\documentclass[{fontsize},a4paper,fontset=fandol]{{ctexart}}
 \usepackage[margin={margin}]{{geometry}}
 \usepackage{{amsmath,amssymb,mathtools,bm}}
@@ -406,7 +479,13 @@ def _header(title: str, fontsize: str = "11pt", margin: str = "1.7cm", *, plain=
 """
 
 
-def build_tex(doc: dict, *, plain=False, body_only=False) -> str:
+def build_tex(doc: dict, *, plain=False, body_only=False, notes=None) -> str:
+    """Build the document.
+
+    ``notes`` is an optional list: when given, a formula rejected by the LaTeX
+    whitelist degrades to its own source text and the reason is appended to
+    ``notes`` instead of aborting the whole document.
+    """
     title = str(doc.get("title") or "解题过程")
     steps = doc.get("steps", [])
     if not isinstance(steps, list):
@@ -425,13 +504,13 @@ def build_tex(doc: dict, *, plain=False, body_only=False) -> str:
 
     def field(name, display=False):
         value = str(doc.get(name) or "")
-        return escape_text(value) if plain else render_field(value, display=display)
+        return escape_text(value) if plain else render_field(value, display=display, notes=notes)
 
     problem_text = display_problem_text(doc.get("problem_latex", ""))
-    problem = escape_text(problem_text) if plain else render_field(problem_text, display=True)
+    problem = escape_text(problem_text) if plain else render_field(problem_text, display=True, notes=notes)
     answer, check = field("answer_latex"), field("check_latex")
     lines = ([r"\section*{" + escape_text(title) + "}"] if body_only
-             else [_header(title, fontsize, margin, plain=plain)])
+             else [_header(title, fontsize, margin, plain=plain, notes=notes)])
     lines.append(
         r"\begin{tcolorbox}[breakable,colback=gray!5,colframe=gray!45,"
         r"title=题目,fonttitle=\bfseries]"
@@ -444,8 +523,8 @@ def build_tex(doc: dict, *, plain=False, body_only=False) -> str:
         if not isinstance(step, dict):
             continue
         text_value, math_value = str(step.get("text") or ""), str(step.get("math") or "")
-        text = escape_text(text_value) if plain else render_inline(text_value)
-        math = escape_text(math_value) if plain else render_math(math_value)
+        text = escape_text(text_value) if plain else render_inline(text_value, notes=notes)
+        math = escape_text(math_value) if plain else render_math(math_value, notes=notes)
         if text:
             lines.append(text)
         if math:
@@ -473,6 +552,7 @@ def build_tex(doc: dict, *, plain=False, body_only=False) -> str:
     return "\n".join(lines)
 
 
-def build_favorites_tex(title, entries, *, plain=False):
-    bodies = [build_tex(entry["doc"], plain=plain or entry["plain"], body_only=True) for entry in entries]
+def build_favorites_tex(title, entries, *, plain=False, notes=None):
+    bodies = [build_tex(entry["doc"], plain=plain or entry["plain"], body_only=True, notes=notes)
+              for entry in entries]
     return "\n".join((_header(title, plain=True), "\n\\clearpage\n".join(bodies), r"\end{document}"))

@@ -1,5 +1,48 @@
 # 升级指南
 
+## 从 v1.0.0 升级到 v1.0.1
+
+v1.0.1 不动 `.env` 结构，但有三项时间预算和一次面板同步要手动做。
+
+1. 停服务并备份（保留原 `.env` 与 `data/`）：
+
+   ```bash
+   sudo systemctl stop qq-math-bot
+   stamp=$(date +%Y%m%d-%H%M%S)
+   sudo tar -czf "/root/qq-math-bot-before-v1.0.1-$stamp.tar.gz" -C /opt/qq-math-bot .env data
+   ```
+
+2. 下载并覆盖代码。压缩包里没有 `.env`、`data/`、`.venv/`，直接复制不会动到它们：
+
+   ```bash
+   cd /tmp
+   curl -fL https://github.com/yuyanhao/qqrobot/archive/refs/tags/v1.0.1.tar.gz -o qqrobot-v1.0.1.tar.gz
+   rm -rf qqrobot-v1.0.1 && mkdir -p qqrobot-v1.0.1
+   tar -xzf qqrobot-v1.0.1.tar.gz --strip-components=1 -C qqrobot-v1.0.1
+   sudo cp -a qqrobot-v1.0.1/. /opt/qq-math-bot/
+   ```
+
+   用 Git 目录部署时改用：`git fetch --tags && git checkout v1.0.1`。
+
+3. 更新 `.env` 的三项时间预算（已有 `.env` 会覆盖代码默认值，不改就仍是旧值）：
+
+   ```dotenv
+   SOLVE_TIMEOUT=900
+   VERIFY_TIMEOUT=600
+   TASK_TIMEOUT=1800
+   ```
+
+4. 启动、同步面板并确认版本：
+
+   ```bash
+   sudo systemctl start qq-math-bot
+   sudo -u qqbot /opt/qq-math-bot/.venv/bin/python /opt/qq-math-bot/qq_panel.py --apply
+   grep -x 1.0.1 /opt/qq-math-bot/VERSION
+   ```
+
+   Docker 部署把第 2、4 步换成 `docker compose up -d --build` 和
+   `docker compose exec qqbot python qq_panel.py --apply`。
+
 ## 从 v0.2.6 升级到 v1.0.0
 
 先按[备份指南](backup.md)停止服务并备份 `.env`、代码和整个 `data` 目录。升级会保留 SQLite 任务记录、收藏、附件和共享书库；应用启动时按需迁移数据库结构。**不要用 `.env.example` 覆盖现有 `.env`。**

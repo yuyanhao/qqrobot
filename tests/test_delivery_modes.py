@@ -1,6 +1,7 @@
 import asyncio
 from collections import OrderedDict
 from pathlib import Path
+import re
 import time
 from types import SimpleNamespace
 
@@ -181,7 +182,7 @@ def test_missing_pdf_is_reported_without_uploading_text_as_pdf(tmp_path, mode, m
             assert all(item[0] == "text" for item in bot.media.sent)
             reply = bot.media.sent[0][1]
             if mode == "PDF":
-                assert "没有可用 PDF" in reply
+                assert "暂无 PDF" in reply
                 assert bot.store.get(task["task_id"])["delivery"] == "awaiting_query"
             else:
                 assert "完整文字解答" in reply
@@ -310,7 +311,7 @@ def test_pdf_extra_arguments_show_usage_without_creating_a_job(tmp_path):
 
 
 @pytest.mark.parametrize("action", ["new", "followup", "retry"])
-def test_registration_only_appends_help_command(tmp_path, action):
+def test_registration_is_one_short_receipt_without_command_spam(tmp_path, action):
     async def check():
         bot = make_bot(tmp_path)
         try:
@@ -320,9 +321,31 @@ def test_registration_only_appends_help_command(tmp_path, action):
             await bot._handle(SimpleNamespace(id=f"request-{action}", content=content), "c2c", "u", "u")
             receipts = [item[1] for item in bot.media.sent if item[0] == "text" and item[1].startswith("已登记")]
             assert len(receipts) == 1
-            assert receipts[0].splitlines()[-1] == "发送 /帮助 查看机器人全部可用指令"
-            assert receipts[0].count("/帮助") == 1 and len(receipts[0]) <= 1800
-            assert all(command not in receipts[0] for command in ("/PDF", "/进度", "/图片", "/追问", "/重试"))
+            assert re.fullmatch(r"已登记 Q\d{6}-\d{6}。\n正在解题，请稍候…", receipts[0])
+            assert all(command not in receipts[0] for command in
+                       ("/帮助", "/PDF", "/进度", "/图片", "/追问", "/重试"))
+            assert bot.queue.qsize() == 1
+        finally:
+            bot.store.close()
+    asyncio.run(check())
+
+
+def test_registration_ack_offers_a_task_id_button(tmp_path):
+    async def check():
+        bot = make_bot(tmp_path)
+        calls = []
+
+        async def send_command_choices(kind, target, text, choices, msg_id=None, msg_seq=None):
+            calls.append((text, choices))
+
+        bot.media.send_command_choices = send_command_choices
+        try:
+            await bot._handle(SimpleNamespace(id="button-ack", content="求积分 x^2"), "c2c", "u", "u")
+            tid = bot.store.list_recent("u")[0]["task_id"]
+            assert len(calls) == 1
+            text, choices = calls[0]
+            assert text == f"已登记 {tid}。\n正在解题，请稍候…"
+            assert choices == [(tid, tid)]
             assert bot.queue.qsize() == 1
         finally:
             bot.store.close()

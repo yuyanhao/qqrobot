@@ -47,45 +47,18 @@ PICKER_STATES = {
     "确认题干": ("needs_input",),
 }
 
-HELP = ("直接发送数学物理题的文字或图片即可获得题号。\n"
-        f"普通 PDF 每份最多 {MAX_INPUT_PDF_MB} MB。群聊可附 PDF 直接发题，私聊请引用 PDF 并写明要求。\n"
-        f"所有要识读的 PDF 都必须明确写页码；每份 PDF 和每个任务最多读取 {MAX_INPUT_PAGES} 页。\n"
-        "未写页码、页数超限或页码格式错误时不会读取 PDF。\n"
-        "完成后：1–3 页发全部图片，超过 3 页发完整 PDF。\n"
-        "群聊每条操作都需 @ 机器人；请用提交原题的账号在原会话操作。\n\n"
-        "题号 或 /结果 题号：查询状态，完成后领取结果；无 PDF 时可分段领取文字稿\n"
-        "/PDF 题号：领取完整 PDF，也支持 /pdf\n"
-        "/进度 题号：只看进度和复核状态\n"
-        "/图片 题号 1：从第 1 页取最多两页图片\n"
-        "/追问 题号 具体问题：关联原题继续提问\n"
-        "/查错 收集题号：把收集材料按题目和草稿查错；自动识别角色，也可写 1题 2-4稿\n"
-        "/查错 最近：选择一条已保存题目，填入 /收集 题号\n"
-        "/查错 收集题号 1题 2-4稿：手动指定哪些材料是题目、草稿或同页\n"
-        "/查错 题号：用已保存的题干，同条附草稿图或写出推导\n"
-        "/查错 同页：只附一张同时含题目和作答的图；收集材料可用 1同页 指定\n"
-        "PDF 页码在 /收集、/补图 或同条 /查错 中指定；每份和每任务最多 5 页\n"
-        "/查错 B0001 第3页：用书库 PDF 作题目，同条附草稿图或在页码后写过程\n"
-        "/题干 题号 [段号]：查看转写和识图疑点；/确认题干 题号 [更正]：确认后继续\n"
-        "/收藏 题号 [错因]：保存题目，解答完成后自动补入；/收藏 查看列表\n"
-        "/复习 [题号]：选一道收藏或领取这题的题目和答案；/取消收藏 题号：移除收藏\n"
-        "/错题本：按收藏时间生成当前会话的全部收藏 PDF\n"
-        "/书库：查看共享书籍；/引用 B0001 第3-5页 [要求]：用指定书页解题；写明第几题时只识别该题及其小问\n"
-        "管理员私聊：先发送 PDF，确认暂存成功后 15 分钟内发送 /入库 书名；无需引用或重发\n"
-        f"管理员书库 PDF 每份默认最多 {MAX_BOOK_PDF_MB} MB，书库总量默认最多 {MAX_BOOK_LIBRARY_MB} MB（可配置）\n"
-        "/补充 题号 补充条件：可用文字或同条附图补充条件\n"
-        "/收集 [说明或原题号]：先收齐多张题图或 PDF，暂不处理\n"
-        "/补图 收集题号 [PDF页码]：同条附图或 PDF，分批追加材料\n"
-        "/解题 收集题号：把收集材料当题目解题；旧写法 /开始 仍可用\n"
-        "/取消 题号：取消该题及其派生的收集/排队/运行任务；/取消 不带题号取消最近一个\n"
-        "/重试 题号：重新解题，创建新题号，可能产生 API 费用\n"
-        "/题目：查看本会话中自己的最近 5 题\n"
-        "/最近：点击填入最近最多 3 个有效题号\n"
-        "/帮助：查看完整用法\n\n"
-        "图片起始页省略时默认为 1。追问、补充均可只附图片，无须另写文字。"
-        "多张补充图可先 /收集 原题号，再逐条 /补图，最后 /解题 或 /查错。"
-        "每条最多 4 个附件，收集题累计最多 12 个；收集期间不会调用模型。"
-        "QQ 没有提供引用附件时请重新发送原图。支持全角斜杠 ／。\n"
-        "联网仅在解题需要时使用，不提供普通聊天、新闻搜索或通用文件处理。")
+HELP = ("发文字或图片即可解题，机器人回复题号。\n"
+        "题号：查进度、领结果；/进度 题号；/PDF 题号；/图片 题号 页码；/结果 题号 第2段\n"
+        "/追问 题号 问题；/补充 题号 条件；/重试 题号；/取消 题号\n"
+        "/收集 [说明] → /补图 收集号 → /开始 收集号（或 /解题）\n"
+        "/查错：收集材料后发 /查错 收集号；或 /查错 题号 [同页] 附草稿\n"
+        "/题干 题号；/确认题干 题号 [更正]\n"
+        "/收藏 题号；/复习；/错题本；/题目；/最近\n"
+        "/书库；/引用 B0001 第3页 [要求]\n"
+        "/帮助：本说明\n"
+        f"\nPDF 须写明页码，每份和每题最多 {MAX_INPUT_PAGES} 页、{MAX_INPUT_PDF_MB} MB；"
+        "每条最多 4 个附件，收集题累计最多 12 个。\n"
+        "群聊每条操作需 @ 机器人；支持全角斜杠。")
 
 
 class TaskCommands:
@@ -114,11 +87,11 @@ class TaskCommands:
             return False
         pdfs = [item for item in attachments if _is_pdf(item)]
         if len(pdfs) > 1:
-            await self._text(context, "一次只能暂存一份 PDF，请只发送一本书的文件。")
+            await self._text(context, "一次只能暂存一份 PDF。")
             return True
         if pdfs:
             if len(attachments) > 1:
-                await self._text(context, "暂存书库 PDF 时请只发送这一份文件；其他图片或材料请分开提交。")
+                await self._text(context, "暂存书库 PDF 时只发这一份文件。")
                 return True
             attachment = pdfs[0]
         elif len(attachments) == 1:
@@ -134,7 +107,7 @@ class TaskCommands:
         elif url and "://" not in url:
             url = "https://" + url
         if not url:
-            await self._text(context, "QQ 没有提供这份文件的下载地址，请等文件上传完成后再发送一次。")
+            await self._text(context, "文件还没上传完，请稍后重发。")
             return True
 
         staged = None
@@ -162,14 +135,14 @@ class TaskCommands:
             if staged:
                 with suppress(OSError):
                     staged.unlink(missing_ok=True)
-            await self._text(context, "PDF 暂存失败，请稍后重发一次文件；还没有进行入库。")
+            await self._text(context, "暂存失败，请重发文件。")
             return True
         except BaseException:
             if staged:
                 with suppress(OSError):
                     staged.unlink(missing_ok=True)
             raise
-        await self._text(context, "已收到并暂存这份 PDF（15 分钟有效）。请接着发送 /入库 书名，可加 | 简介；无需引用或再次发送文件。")
+        await self._text(context, "已暂存（15 分钟内有效）。发 /入库 书名 完成入库。")
         return True
 
     @staticmethod
@@ -205,7 +178,7 @@ class TaskCommands:
             return
         if text in ("/题目", "题目", "我的题目"):
             recent = self.store.list_recent(context.owner)
-            await self._text(context, "\n\n".join(describe(t) for t in recent) or "还没有题目记录。")
+            await self._text(context, "\n\n".join(describe(t) for t in recent) or "还没有题目。")
             return
         parts = text.split(maxsplit=1) if text.startswith("/") else []
         command = parts[0][1:] if parts else ""
@@ -255,10 +228,10 @@ class TaskCommands:
             await self._task_command(context, action, tid, tail, quoted, attachments)
             return
         if action in TASK_ARGUMENTS:
-            await self._text(context, f"用法：/{action} 题号{TASK_ARGUMENTS[action]}。发 /题目 可查题号。")
+            await self._text(context, f"用法：/{action} 题号{TASK_ARGUMENTS[action]}")
             return
         if text.startswith(("/搜", "/问", "/读", "/文件")):
-            await self._text(context, "通用聊天、搜索和文件命令已关闭。请直接发送数学物理题，解题时会按需搜索。")
+            await self._text(context, "只支持数学物理题，直接发题即可。")
             return
         if text.startswith("/"):
             await self._text(context, HELP)
@@ -281,8 +254,8 @@ class TaskCommands:
         if not candidates:
             await self._text(context, "没有可继续查错的已保存题目；先发 /收集 收集题目和草稿。")
             return
-        lines = ["选择要查错的题目。选好后先用 /补图 收集草稿，再发 /查错 收集号。",
-                 "点题号可填入 /收集 指令，也可复制对应的一行。"]
+        lines = ["选要查错的题，之后补草稿。",
+                 "点题号填入指令。"]
         choices = []
         for index, (tid, status) in enumerate(candidates, 1):
             command = f"/收集 {tid}"
@@ -305,14 +278,13 @@ class TaskCommands:
                            + " · " + STATES.get(row["state"], row["state"])) for row in rows]
         if not candidates:
             if action == "最近":
-                await self._text(context, "你在本会话还没有近期题目。")
+                await self._text(context, "还没有近期题目。")
             elif action == "查错":
-                await self._text(context, "没有可继续查错的已保存题目；发 /查错 后单独发送题目图即可开始。")
+                await self._text(context, "没有可继续查错的题目。")
             return False
 
-        lines = (["最近题目。点题号填入输入框。"] if action == "最近"
-                 else [f"用法：/{action} 题号{QUESTION_ID_COMMANDS[action]}",
-                       "点题号可填入指令，也可复制对应的一行。"])
+        lines = (["最近题目，点题号填入输入框。"] if action == "最近"
+                 else [f"用法：/{action} 题号{QUESTION_ID_COMMANDS[action]}"])
         choices = []
         for index, (tid, status) in enumerate(candidates, 1):
             command = tid if action == "最近" else f"/{action} {tid}"
@@ -326,24 +298,24 @@ class TaskCommands:
             return
         task = self.store.get(tid, context.owner)
         if task is None:
-            await self._text(context, "未找到你在本会话中的这个题号。")
+            await self._text(context, "未找到该题号。")
             return
         if action == "补图" or (action == "补充" and task["state"] == "collecting"):
             if task["state"] != "collecting":
-                await self._text(context, f"/补图 仅用于收集中的题目；多张补充图请先发 /收集 {tid}，单次补充可发 /补充 {tid} 并附图。")
+                await self._text(context, f"/补图 只用于收集中题目；单次补充发 /补充 {tid}。")
                 return
             await self._append_collection(context, tid, tail, quoted, attachments)
         elif action in ("开始", "解题"):
             if tail or attachments or quoted:
-                await self._text(context, f"请先用 /补图 {tid} 追加材料，再单独发送 /{action} {tid}。")
+                await self._text(context, f"先 /补图 {tid} 追加材料，再发 /{action} {tid}。")
             else:
                 await self._start_collection(context, tid)
         elif action in ("追问", "补充") or (action == "结果" and tail):
             if task["state"] == "collecting":
-                await self._text(context, f"这道题还在收集材料，请先发 /解题 {tid} 或 /查错 {tid}；补充材料可用 /补图 或 /补充。")
+                await self._text(context, f"还在收集材料：先 /解题 {tid} 或 /查错 {tid}。")
                 return
             if not tail and not quoted and not attachments:
-                await self._text(context, "请填写补充条件/追问，或在同一条消息附上图片。QQ 未提供引用图片时，请重新发送原图。")
+                await self._text(context, "请写内容或同条附图；引用图片失效时请重发原图。")
                 return
             await self._submit(context, {"text": tail, "parent_id": tid, "quoted": quoted,
                                          "attachments": attachments,
@@ -354,7 +326,7 @@ class TaskCommands:
             await self._retry_task(context, task)
         elif action == "PDF":
             if tail:
-                await self._text(context, f"用法：/PDF {tid}（不需要页码或其他参数）")
+                await self._text(context, f"用法：/PDF {tid}")
             else:
                 await self._deliver(task, context, "PDF")
         elif action == "文字稿":
@@ -378,7 +350,7 @@ class TaskCommands:
             if task["state"] == "collecting" or task["state"] in ACTIVE:
                 await self._cancel_task(context, task)
                 return
-        await self._text(context, "没有可取消的收集或运行中任务。")
+        await self._text(context, "没有可取消的任务。")
 
     def _matching_origin(self, task, owner, problem):
         origin_id = task["request"].get("origin_id") if task else None
@@ -392,13 +364,13 @@ class TaskCommands:
     async def _show_confirmed_question(self, context, tid):
         successor = self.store.confirmation_successor(tid, context.owner)
         if successor:
-            await self._text(context, f"{tid} 的题干已校对，继续题号为 {successor}。"
-                                      f"发送 {successor} 查看进度或领取结果。")
+            await self._text(context, f"{tid} 已校对，继续用 {successor}。"
+                                      f"发 {successor} 查进度。")
         return bool(successor)
 
     @staticmethod
     def _confirmation_help(tid):
-        return f"发 /题干 {tid} 核对，再发 /确认题干 {tid}（可在题号后写更正）继续。"
+        return f"发 /题干 {tid} 核对，再发 /确认题干 {tid} [更正] 继续。"
 
     async def _question_command(self, context, action, args):
         reference = QUESTION_REFERENCE.fullmatch(args)
@@ -415,7 +387,7 @@ class TaskCommands:
         else:
             favorite = self.store.get_favorite(tid, context.owner)
             if not favorite:
-                reply = "未找到你在本会话中的这个题号。" if not source else f"{tid} 尚无可用题干。"
+                reply = "未找到该题号。" if not source else f"{tid} 尚无可用题干。"
                 await self._text(context, reply)
                 return
             problem, ocr = favorite["problem"], favorite["question_ocr"]
@@ -430,7 +402,7 @@ class TaskCommands:
             size = 1400
             total = (len(contents) + size - 1) // size
             if page > total:
-                await self._text(context, f"{tid} 题干共 {total} 段，没有第 {page} 段。")
+                await self._text(context, f"题干共 {total} 段，没有第 {page} 段。")
                 return
             reply = f"{tid}｜题干 {page}/{total}\n{contents[(page - 1) * size:page * size]}"
             if page < total:
@@ -440,12 +412,12 @@ class TaskCommands:
             await self._text(context, reply)
             return
         if not ocr.get("needs_confirmation"):
-            await self._text(context, f"{tid} 的题干无需确认。")
+            await self._text(context, "题干无需确认。")
             return
         if tail:
             problem += "\n\n用户核对后的更正（以本段为准）：\n" + tail
         if len(problem) > 24000:
-            await self._text(context, "确认后的题干超过 2.4 万字符，请按小问重新提交。")
+            await self._text(context, "题干太长，请按小问拆分。")
             return
         confirmed = {**ocr, "confirmed": True, "needs_confirmation": False}
         key = confirmation_key(tid, problem, confirmed)
@@ -475,7 +447,7 @@ class TaskCommands:
             source = self.store.get(tid, context.owner)
             if source and source["state"] == "collecting":
                 if quoted:
-                    await self._text(context, f"查错材料请先用 /补图 {tid} 追加。")
+                    await self._text(context, f"先 /补图 {tid} 追加材料。")
                     return
                 await self._start_collection_check(context, source, tail, attachments)
                 return
@@ -485,7 +457,7 @@ class TaskCommands:
             elif favorite and favorite["problem"]:
                 problem, ocr = favorite["problem"], favorite["question_ocr"]
             else:
-                await self._text(context, f"未找到 {tid} 的题干。可先发 /收集 {tid} 收集草稿，再用 /查错 收集号。")
+                await self._text(context, f"未找到 {tid} 的题干；可先 /收集 {tid}。")
                 return
             if ocr.get("needs_confirmation"):
                 await self._text(context, self._confirmation_help(tid))
@@ -493,7 +465,7 @@ class TaskCommands:
             if re.match(r"^同页(?:\s+|$)", tail):
                 tail = re.sub(r"^同页\s*", "", tail, count=1).strip()
             if not attachments and not quoted and not tail:
-                await self._text(context, f"请把草稿附在同一条消息，或先发 /收集 {tid} 收集草稿，再用 /查错 收集号。")
+                await self._text(context, f"请同条附草稿，或先 /收集 {tid} 再 /查错 收集号。")
                 return
             request = {"action": "查错", "text": tail, "quoted": quoted,
                        "attachments": list(attachments), "problem_snapshot": problem,
@@ -508,10 +480,10 @@ class TaskCommands:
                 await self._text(context, str(exc))
                 return
             if any(_is_pdf(item) for item in attachments):
-                await self._text(context, "草稿含 PDF 时请先 /收集 B0001 第3页 收集草稿，再用 /查错 收集号。")
+                await self._text(context, "草稿含 PDF：先 /收集 B0001 第3页。")
                 return
             if not attachments and not quoted and not tail:
-                await self._text(context, "请把草稿附在同一条消息，或先 /收集 B0001 第3页 收集草稿，再用 /查错 收集号。")
+                await self._text(context, "请同条附草稿，或先 /收集 B0001 第3页。")
                 return
             request = {"action": "查错", "text": tail, "quoted": quoted,
                        "attachments": list(attachments), "question_attachments": [book]}
@@ -521,8 +493,7 @@ class TaskCommands:
         if not (attachments or quoted):
             await self._text(
                 context,
-                "用法：先发 /收集 收齐题目和草稿，再发 /查错 收集号；"
-                "也可在同一条消息附草稿并用 /查错 题号。")
+                "用法：/查错 收集号，或 /查错 题号 附草稿。")
             return
 
         same_material = False
@@ -546,8 +517,7 @@ class TaskCommands:
                     selection, draft_text = split_pdf_selection(tail)
                     if not selection:
                         raise PDFError(
-                            f"使用 PDF 时请明确指定页码；每份 PDF 和每个任务最多读取 "
-                            f"{MAX_INPUT_PAGES} 页，例如“/查错 第3页 我令 t=x”。")
+                            f"PDF 请写明页码（最多 {MAX_INPUT_PAGES} 页），例如 /查错 第3页 草稿。")
                 except PDFError as exc:
                     await self._text(context, str(exc))
                     return
@@ -560,7 +530,7 @@ class TaskCommands:
                 else:
                     questions, drafts = [item], []
             elif same_material:
-                await self._text(context, "同页只接受一份材料；多份材料请用 /收集 后 /查错 收集号。")
+                await self._text(context, "同页只接受一份；多份请走 /收集。")
                 return
             else:
                 questions, drafts = [attachments[0]], list(attachments[1:])
@@ -582,8 +552,7 @@ class TaskCommands:
                 selection, request["text"] = split_pdf_selection(request.get("text") or "")
                 if not selection:
                     raise PDFError(
-                        f"草稿含 PDF 时请明确指定页码；每份 PDF 和每个任务最多读取 "
-                        f"{MAX_INPUT_PAGES} 页。")
+                        f"PDF 请写明页码（最多 {MAX_INPUT_PAGES} 页）。")
             except PDFError as exc:
                 await self._text(context, str(exc))
                 return
@@ -594,7 +563,7 @@ class TaskCommands:
         request["attachments"] = attachments
         request["question_attachments"] = questions
         if not (request.get("text") or request.get("quoted") or attachments):
-            await self._text(context, "请附上草稿图或写出推导。使用已保存题号或书籍时，同条图片均作草稿。")
+            await self._text(context, "请附草稿图或写推导。")
             return
         if len(request.get("text") or "") + len(request.get("quoted") or "") > 24000:
             await self._text(context, "材料超过 2.4 万字符，请按小问拆分。")
@@ -609,24 +578,23 @@ class TaskCommands:
             if action in ("入库", "移除书籍"):
                 if (context.kind != "c2c" or context.target != getattr(self, "book_admin_openid", "")
                         or not context.target):
-                    await self._text(context, "书库管理仅对已配置的管理员私聊开放。")
+                    await self._text(context, "仅管理员私聊可管理书库。")
                     return
                 if action == "移除书籍":
                     async with self.book_import_lock:
                         book = library.remove(args)
                         self._cleanup_retired_books()
-                    await self._text(context, f"已移除 {book['id']} 《{book['title']}》。"
-                                              "已登记且仍需此书的任务可以继续读取。")
+                    await self._text(context, f"已移除 {book['id']}。")
                     return
                 if not args:
-                    await self._text(context, "格式：/入库 书名 | 简介（简介可省略）。也可先发送 PDF，收到暂存确认后再发入库命令。")
+                    await self._text(context, "格式：/入库 书名 [| 简介]。")
                     return
                 pdfs = [item for item in attachments if _is_pdf(item)]
                 if len(pdfs) > 1:
-                    await self._text(context, "检测到多份 PDF，请在同一条消息中只附一份 PDF。")
+                    await self._text(context, "一次只能附一份 PDF。")
                     return
                 if pdfs and len(attachments) > 1:
-                    await self._text(context, "入库时请只附这一份 PDF；其他材料请分开提交。")
+                    await self._text(context, "入库只附一份 PDF。")
                     return
                 if pdfs:
                     attachment = pdfs[0]
@@ -637,7 +605,7 @@ class TaskCommands:
                 elif not attachments:
                     attachment = None
                 else:
-                    await self._text(context, "收到多个附件但无法确定哪份是 PDF，请只附一份 PDF 后重试。")
+                    await self._text(context, "无法确定哪份是 PDF，请只附一份。")
                     return
                 async with self.book_import_lock:
                     title, _, summary = args.replace("｜", "|", 1).partition("|")
@@ -649,7 +617,7 @@ class TaskCommands:
                             pending[1].unlink(missing_ok=True)
                         pending = None
                     if attachment is None and pending is None:
-                        await self._text(context, "没有可用的待入库 PDF。请先私聊发送一份 PDF，收到暂存确认后再发 /入库 书名。")
+                        await self._text(context, "没有待入库 PDF：先私聊发 PDF。")
                         return
 
                     if pending:
@@ -687,7 +655,7 @@ class TaskCommands:
                     if completed_pending:
                         with suppress(OSError):
                             completed_pending[1].unlink(missing_ok=True)
-                await self._text(context, f"已入库 {book['id']} 《{book['title']}》，共 {book['pages']} 页。")
+                await self._text(context, f"已入库 {book['id']} · {book['pages']} 页。")
                 return
             if action == "引用" and re.match(rf"{BOOK_ID}\s+", args, re.I):
                 item, tail = library.reference(args)
@@ -711,11 +679,10 @@ class TaskCommands:
                 return
             if action == "引用" and re.fullmatch(BOOK_ID, args, re.I):
                 book = library.get_by_display_id(args)
-                await self._text(context, f"《{book['title']}》共 {book['pages']} 页。"
-                                          f"请发送 /引用 {book['id']} 第3页 [解题要求]，页码从文件第一页数起。")
+                await self._text(context, f"《{book['title']}》{book['pages']} 页：发 /引用 {book['id']} 第3页 [要求]。")
                 return
             if args and not re.fullmatch(r"[1-9][0-9]{0,5}", args):
-                await self._text(context, "请发 /书库 [列表页] 或 /引用 B0001 第3-5页 [要求]。")
+                await self._text(context, "用法：/书库 [页] 或 /引用 B0001 第3页。")
                 return
             page = int(args or "1")
             size = 5
@@ -731,14 +698,14 @@ class TaskCommands:
                     lines.append(book["summary"])
                 lines.append(command)
                 choices.append((book["id"], command))
-            lines.append("点编号后补页码再发送，例如 /引用 B0001 第3页。")
+            lines.append("点编号后补页码，如 /引用 B0001 第3页。")
             if len(books) > size:
                 lines.append(f"下一页：/书库 {page + 1}")
             await self._command_choices(context, "\n".join(lines), choices)
         except ClientError:
-            await self._text(context, "书籍下载中断，请重新发送入库指令和 PDF。")
+            await self._text(context, "下载中断，请重发 PDF。")
         except (PDFError, ValueError, DownloadError, OSError, sqlite3.Error) as exc:
-            await self._text(context, f"书库操作失败：{exc}")
+            await self._text(context, f"书库失败：{exc}")
 
     async def _favorite_command(self, context, action, args):
         owner = context.owner
@@ -758,9 +725,9 @@ class TaskCommands:
             size = 5 if action == "复习" else FAVORITES_PER_PAGE
             rows = self.store.favorites_in_order(owner, limit=size + 1, offset=(page - 1) * size)
             if not rows:
-                await self._text(context, "本页没有收藏。发 /收藏 题号 可保存一道题。")
+                await self._text(context, "本页没有收藏。")
                 return
-            lines = [f"本会话的收藏｜第 {page} 页（最早收藏在前）"]
+            lines = [f"收藏 · 第 {page} 页"]
             choices = []
             for row in rows[:size]:
                 tid = row["task_id"]
@@ -786,14 +753,14 @@ class TaskCommands:
             return
         if action == "取消收藏":
             changed = self.store.remove_favorite(tid, owner)
-            await self._text(context, f"已取消收藏 {tid}。" if changed else "未找到你在本会话中的这个收藏。")
+            await self._text(context, f"已取消收藏 {tid}。" if changed else "未找到该收藏。")
             return
         favorite = self.store.get_favorite(tid, owner)
         if action == "复习":
             if favorite:
                 await self._send_favorite_pdf(context, [favorite], f"复习 {tid}")
             else:
-                await self._text(context, "未找到你在本会话中的这个收藏。")
+                await self._text(context, "未找到该收藏。")
             return
 
         task = self.store.get(tid, owner)
@@ -813,4 +780,4 @@ class TaskCommands:
         except ValueError as exc:
             await self._text(context, str(exc))
             return
-        await self._text(context, f"已收藏 {tid}。发 /复习 {tid} 领取题目和答案。")
+        await self._text(context, f"已收藏 {tid}。发 /复习 {tid} 取题。")

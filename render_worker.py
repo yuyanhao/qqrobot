@@ -28,9 +28,13 @@ def render_document(request, mode, directory):
     if not binary:
         raise ValueError("找不到 XeLaTeX")
     warnings = []
+    # Formulas rejected by the LaTeX whitelist degrade one by one; only a real
+    # compiler failure still falls back to the whole-document source mode.
+    notes: list[str] = []
     if mode == "favorites":
         def render(plain):
-            return build_favorites_tex(request["title"], request["entries"], plain=plain)
+            return build_favorites_tex(request["title"], request["entries"], plain=plain,
+                                       notes=None if plain else notes)
     else:
         from plot_tools import create_plots
         doc = request["doc"]
@@ -39,7 +43,8 @@ def render_document(request, mode, directory):
                             r"}\end{center}" for p in plots)
 
         def render(plain):
-            return build_tex(doc, plain=plain).replace(r"\end{document}", figures + "\n" + r"\end{document}")
+            return build_tex(doc, plain=plain, notes=None if plain else notes).replace(
+                r"\end{document}", figures + "\n" + r"\end{document}")
 
     try:
         compile_tex(render(False), binary)
@@ -50,6 +55,9 @@ def render_document(request, mode, directory):
                                         "\n本文件保留了无法排版的公式原文。\\par\n", 1)
         compile_tex(fallback, binary)
         warnings.append("部分公式无法按原格式排版，本次 PDF 保留了原文。")
+    else:
+        if notes:
+            warnings.append(f"{len(notes)} 处公式无法排版，已按原文显示；其余内容排版正常。")
     return warnings
 
 

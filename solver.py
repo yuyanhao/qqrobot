@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 import io
 import json
 import logging
+import time
 
 from PIL import Image, ImageOps
 from ai import AIError, normalize_solution
@@ -14,7 +15,7 @@ from file_tools import DownloadError, download_file
 from input_cache import InputCacheError, attachment_limit, read_cached_attachment
 from message_input import _is_pdf, _is_text_file, _decode_text
 from pdf_tools import MAX_INPUT_PAGES, PDFError, pdf_task_page_budget
-from render import RenderError, display_problem_text
+from render import RenderError, display_problem_text, strip_page_furniture
 from render_service import render_artifacts_async, render_input_pdf_batches_async
 from search_tools import deepseek_search
 import sympy_tools
@@ -187,7 +188,8 @@ class Solver:
             recognized_batches = await transcribe_with_fallback(images, options)
             for index, recognized in enumerate(recognized_batches, 1):
                 part_label = label if len(recognized_batches) == 1 else f"{label}（拆分识别 {index}/{len(recognized_batches)}）"
-                blocks.append(part_label + "：\n" + recognized["problem_latex"])
+                transcribed = strip_page_furniture(recognized["problem_latex"]) or recognized["problem_latex"]
+                blocks.append(part_label + "：\n" + transcribed)
             if sum(map(len, blocks)) > 24000:
                 raise InputError(f"读取的材料超过 24000 字符，尚未完成全文处理；每份 PDF 每次最多读取 {MAX_INPUT_PAGES} 页，请按页码分段或按小问拆分。")
             for recognized in recognized_batches:
@@ -401,6 +403,18 @@ class Solver:
         if task["request"].get("action") in STUDY_ACTIONS:
             await self.run_study(task, directory)
             return
+        # Leave a reserve for rendering and delivery: one slow stage must never
+        # eat the whole job budget and lose an otherwise finished solution.
+        reserved, job_budget = 60, int(getattr(self.settings, "job_timeout", 0) or 0)
+        deadline = time.monotonic() + max(1, job_budget - reserved) if job_budget else 0.0
+        verify_hold = int(getattr(self.settings, "verify_timeout", 0) or 0) \
+            if getattr(self.settings, "verify", False) else 0
+
+        def budget(stage_limit, *, hold=0):
+            limit = int(stage_limit)
+            if not deadline:
+                return limit
+            return max(1, min(limit, int(deadline - time.monotonic()) - hold))
         problem, extra, input_notes = await self.inputs(task, directory)
         self.store.update(tid, state="planning")
         plan = await self.ai.plan_problem(problem, extra)
@@ -426,7 +440,8 @@ class Solver:
             except Exception:
                 warnings.append("符号计算未完成")
         self.store.update(tid, state="solving")
-        solution = await self.ai.solve(problem, extra, self.settings.solve_timeout, calculations, evidence)
+        solution = await self.ai.solve(problem, extra, budget(self.settings.solve_timeout),
+                                       calculations, evidence)
         self.save_draft(tid, directory, solution, problem, input_notes)
         if solution.get("search_query") and not searched and self.settings.search and self.settings.search_key:
             self.store.update(tid, state="searching")
@@ -436,27 +451,34 @@ class Solver:
                 evidence = "联网搜索失败；不能声称已获取来源。"
                 warnings.append("搜索未完成")
             self.store.update(tid, state="solving")
-            solution = await self.ai.solve(problem, extra, self.settings.solve_timeout, calculations, evidence)
+            solution = await self.ai.solve(problem, extra, budget(self.settings.solve_timeout, hold=verify_hold),
+                                           calculations, evidence)
             self.save_draft(tid, directory, solution, problem, input_notes)
         solution["problem_latex"] = problem
         verification = "未进行复核"
         if self.settings.verify and solution["status"] != "needs_clarification":
             self.store.update(tid, state="verifying")
-            try:
-                checked = await self.ai.verify(problem, solution, self.settings.verify_timeout, extra=extra, evidence=evidence)
-                if checked["ok"]:
-                    verification = "模型复核通过（不等于严格正确性保证）"
-                elif checked.get("corrected"):
-                    solution = normalize_solution(checked["corrected"])
-                    solution["problem_latex"] = problem
+            available = budget(self.settings.verify_timeout)
+            if deadline and available < 45:
+                verification = "未复核（总时间不足）"
+            else:
+                try:
+                    checked = await self.ai.verify(problem, solution, available, extra=extra, evidence=evidence)
+                    if checked["ok"]:
+                        verification = "模型复核通过（不等于严格正确性保证）"
+                    elif checked.get("corrected"):
+                        solution = normalize_solution(checked["corrected"])
+                        solution["problem_latex"] = problem
+                        solution["status"] = "uncertain"
+                        verification = "复核发现问题并给出修订，修订稿尚未再次核验"
+                    else:
+                        solution["status"] = "uncertain"
+                        verification = "存在疑点：" + "；".join(checked["errors"])[:1200]
+                        if checked.get("rewrite_skipped"):
+                            verification += "（未生成修订稿）"
+                except AIError as exc:
+                    verification = f"未完成（{exc.code}），以下为未通过复核的解答"
                     solution["status"] = "uncertain"
-                    verification = "复核发现问题并给出修订，修订稿尚未再次核验"
-                else:
-                    solution["status"] = "uncertain"
-                    verification = "存在疑点：" + "；".join(checked["errors"])[:1200]
-            except AIError as exc:
-                verification = f"未完成（{exc.code}），以下为未通过复核的解答"
-                solution["status"] = "uncertain"
         solution["check_latex"] += "\n\n" + verification
         if input_notes: solution["check_latex"] += "\n" + input_notes
         if sources:
