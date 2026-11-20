@@ -83,7 +83,7 @@ class TaskDelivery:
                 return False
         return True
 
-    async def _command_choices(self, context, text, choices, *, per_row=1):
+    async def _command_choices(self, context, text, choices, *, per_row=1, fallback=None):
         send_choices = getattr(self.media, "send_command_choices", None)
         if send_choices:
             async def layout(kind, target, content, buttons, msg_id=None, msg_seq=None):
@@ -95,7 +95,7 @@ class TaskDelivery:
             except QQMediaError as exc:
                 log.info("command_buttons_unavailable category=%s status=%s code=%s",
                          exc.category, exc.status, exc.code)
-        await self._text(context, text)
+        await self._text(context, fallback or text)
 
     async def _send_favorite_pdf(self, context, favorites, title):
         entries = []

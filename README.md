@@ -4,7 +4,7 @@
 ![Release](https://img.shields.io/github/v/release/yuyanhao/qqrobot)
 ![License](https://img.shields.io/github/license/yuyanhao/qqrobot)
 
-当前代码版本：**v1.0.2**。变更内容见 [CHANGELOG.md](CHANGELOG.md)。
+当前代码版本：**v1.0.3**。变更内容见 [CHANGELOG.md](CHANGELOG.md)。
 
 `VERSION` 保存版本号；主分支更新此文件时，发布流程会创建对应 Git 标签和 GitHub Release。
 
@@ -102,7 +102,7 @@ docker compose logs --tail=100
 - 直接发题号或「/结果 题号」查询并领取，排版后 1–3 页发全部图片，超过 3 页发 PDF。若只有文字稿，会发回第一段，再按提示用「/结果 题号 第2段」继续领取。用「/PDF 题号」可指定领取完整 PDF。
 - 「/书库」查看共享 PDF，编号按当前在库顺序连续排列；移除一本后，后续书籍编号自动顺延。「/引用 B0001 第3-5页」读取指定书页。所有附加 PDF 也须明确指定页码，且整项任务累计最多 5 页。管理员书库单份 PDF 默认限 100 MB、书库总量默认限 1 GB（`BOOK_MAX_PDF_MB` / `BOOK_LIBRARY_MAX_MB`）；暂存 15 分钟后过期。
 - 「/收藏 题号」永久保存，解答完成后补入。「/复习」选题，「/复习 题号」领取题目和答案，「/错题本」导出本会话全部收藏。普通结果默认保留 7 天。
-- 手机 QQ 群的原生面板可用 python qq_panel.py 预览，部署后用 python qq_panel.py --apply 同步。「/最近」列出最近 4 个可点击的题号（两行两列），不显示提交时间。
+- 手机 QQ 群的原生面板可用 python qq_panel.py 预览，部署后用 python qq_panel.py --apply 同步。「/最近」只发两行两列的题号按钮，不输出文字（按钮不可用时退回题号列表）。
 
 [完整指令、书库管理员配置和面板同步方式](docs/qq-command-guide.md)
 
@@ -168,21 +168,21 @@ python -m pytest -q
 
 ## 更新
 
-先等待当前任务完成，停止旧、新 systemd 服务并备份实际 `.env`、代码和数据目录。停止服务可确保 SQLite WAL 与附件一起保持一致。正式发布标签为 v1.0.2。
+先等待当前任务完成，停止旧、新 systemd 服务并备份实际 `.env`、代码和数据目录。停止服务可确保 SQLite WAL 与附件一起保持一致。正式发布标签为 v1.0.3。
 
 ```bash
 cd /opt/qq-math-bot
 sudo systemctl stop qqbot || true
 sudo systemctl stop qq-math-bot || true
 stamp=$(date +%Y%m%d-%H%M%S)
-sudo tar -czf "/root/qq-math-bot-before-v1.0.2-$stamp.tar.gz" -C /opt/qq-math-bot .env data
-sudo tar -czf "/root/qq-math-bot-code-before-v1.0.2-$stamp.tar.gz" -C /opt/qq-math-bot --exclude=data --exclude=.env .
+sudo tar -czf "/root/qq-math-bot-before-v1.0.3-$stamp.tar.gz" -C /opt/qq-math-bot .env data
+sudo tar -czf "/root/qq-math-bot-code-before-v1.0.3-$stamp.tar.gz" -C /opt/qq-math-bot --exclude=data --exclude=.env .
 cd /tmp
-curl -fL https://github.com/yuyanhao/qqrobot/archive/refs/tags/v1.0.2.tar.gz -o qqrobot-v1.0.2.tar.gz
-rm -rf qqrobot-v1.0.2
-mkdir -p qqrobot-v1.0.2
-tar -xzf qqrobot-v1.0.2.tar.gz --strip-components=1 -C qqrobot-v1.0.2
-cd qqrobot-v1.0.2
+curl -fL https://github.com/yuyanhao/qqrobot/archive/refs/tags/v1.0.3.tar.gz -o qqrobot-v1.0.3.tar.gz
+rm -rf qqrobot-v1.0.3
+mkdir -p qqrobot-v1.0.3
+tar -xzf qqrobot-v1.0.3.tar.gz --strip-components=1 -C qqrobot-v1.0.3
+cd qqrobot-v1.0.3
 sudo bash setup.sh
 sudo -u qqbot /opt/qq-math-bot/.venv/bin/python /opt/qq-math-bot/qq_panel.py --apply
 ```
@@ -193,20 +193,20 @@ Docker 更新在现有 Compose 项目目录执行；`.env` 由 Compose 的 `env_
 
 ```bash
 cd /path/to/qqrobot
-cp .env "/root/qqbot-env-before-v1.0.2-$(date +%Y%m%d-%H%M%S)"
+cp .env "/root/qqbot-env-before-v1.0.3-$(date +%Y%m%d-%H%M%S)"
 docker compose stop
 volume="$(docker volume ls -q --filter label=com.docker.compose.volume=qqbot-data | head -n 1)"
 test -n "$volume"
-backup="qqbot-data-before-v1.0.2-$(date +%Y%m%d-%H%M%S).tar.gz"
+backup="qqbot-data-before-v1.0.3-$(date +%Y%m%d-%H%M%S).tar.gz"
 docker run --rm -v "$volume:/data:ro" -v "$PWD:/backup" alpine:3.22 \
   tar -czf "/backup/$backup" -C /data .
 git fetch --tags
-git checkout v1.0.2
+git checkout v1.0.3
 docker compose up -d --build
 docker compose exec qqbot python qq_panel.py --apply
 ```
 
-不要执行 `docker compose down -v`，它会删除数据卷。发布页为 `https://github.com/yuyanhao/qqrobot/releases/tag/v1.0.2`，源码归档地址为 `https://github.com/yuyanhao/qqrobot/archive/refs/tags/v1.0.2.tar.gz`；使用 Git 仓库目录部署时，正式发布后可执行 `git checkout v1.0.2`。
+不要执行 `docker compose down -v`，它会删除数据卷。发布页为 `https://github.com/yuyanhao/qqrobot/releases/tag/v1.0.3`，源码归档地址为 `https://github.com/yuyanhao/qqrobot/archive/refs/tags/v1.0.3.tar.gz`；使用 Git 仓库目录部署时，正式发布后可执行 `git checkout v1.0.3`。
 
 `update_delivery.sh` 和 `update_pdf_input.sh` 已停用，避免旧代码覆盖当前版本的安全限制。`update_search.sh` 仅用于旧版搜索迁移；新部署请使用完整安装包和 `setup.sh`。`repair_pdf.sh` 只重排已保存的解答，不处理输入 PDF。
 

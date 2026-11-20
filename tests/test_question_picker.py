@@ -159,7 +159,7 @@ def test_recent_offers_four_bare_ids_in_two_rows_of_two(tmp_path):
         asyncio.run(dispatch(bot, "/最近"))
         text, choices, per_row = calls[0]
         newest = list(reversed(ids))[:4]
-        assert text.splitlines() == newest
+        assert text == "\u200b"
         assert choices == [(tid, tid) for tid in newest]
         assert per_row == 2
     finally:

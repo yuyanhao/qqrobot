@@ -1,5 +1,19 @@
 # 升级指南
 
+## 从 v1.0.2 升级到 v1.0.3
+
+只改 `/最近` 的发送方式，不动 `.env`、数据库和面板：
+
+```bash
+cd /tmp
+curl -fL https://github.com/yuyanhao/qqrobot/archive/refs/tags/v1.0.3.tar.gz -o qqrobot-v1.0.3.tar.gz
+rm -rf qqrobot-v1.0.3 && mkdir -p qqrobot-v1.0.3
+tar -xzf qqrobot-v1.0.3.tar.gz --strip-components=1 -C qqrobot-v1.0.3
+sudo cp -a qqrobot-v1.0.3/. /opt/qq-math-bot/
+sudo systemctl restart qq-math-bot
+grep -x 1.0.3 /opt/qq-math-bot/VERSION
+```
+
 ## 从 v1.0.1 升级到 v1.0.2
 
 只改消息文案，不动 `.env`、数据库和面板。覆盖代码后重启即可：

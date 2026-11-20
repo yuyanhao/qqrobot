@@ -285,7 +285,8 @@ class TaskCommands:
 
         if action == "最近":
             ids = [tid for tid, _ in candidates[:4]]
-            await self._command_choices(context, "\n".join(ids), [(tid, tid) for tid in ids], per_row=2)
+            await self._command_choices(context, "\u200b", [(tid, tid) for tid in ids],
+                                        per_row=2, fallback="\n".join(ids))
             return True
         lines = [f"用法：/{action} 题号{QUESTION_ID_COMMANDS[action]}"]
         choices = []
