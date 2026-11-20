@@ -62,7 +62,7 @@ def test_picker_falls_back_to_copyable_commands_on_qq_permission_error(tmp_path)
         tid = add_task(bot.store, "own")
         attempts = []
 
-        async def refuse(kind, target, text, choices, msg_id, msg_seq):
+        async def refuse(kind, target, text, choices, msg_id, msg_seq, per_row=1):
             attempts.append((msg_id, msg_seq))
             raise QQMediaError("模拟没有自定义按钮权限", category="permission", status=403)
 
@@ -141,6 +141,27 @@ def test_recent_buttons_fill_bare_question_id(tmp_path):
         asyncio.run(dispatch(bot, "/最近"))
         assert bot.media.sent[0][1].endswith(tid)
         assert bot.queue.empty()
+    finally:
+        bot.store.close()
+
+
+def test_recent_offers_four_bare_ids_in_two_rows_of_two(tmp_path):
+    bot = make_bot(tmp_path)
+    try:
+        ids = [add_task(bot.store, f"recent-{index}") for index in range(5)]
+        calls = []
+
+        async def send_command_choices(kind, target, text, choices, msg_id=None, msg_seq=None,
+                                       per_row=1):
+            calls.append((text, choices, per_row))
+
+        bot.media.send_command_choices = send_command_choices
+        asyncio.run(dispatch(bot, "/最近"))
+        text, choices, per_row = calls[0]
+        newest = list(reversed(ids))[:4]
+        assert text.splitlines() == newest
+        assert choices == [(tid, tid) for tid in newest]
+        assert per_row == 2
     finally:
         bot.store.close()
 

@@ -1,5 +1,19 @@
 # 升级指南
 
+## 从 v1.0.1 升级到 v1.0.2
+
+只改消息文案，不动 `.env`、数据库和面板。覆盖代码后重启即可：
+
+```bash
+cd /tmp
+curl -fL https://github.com/yuyanhao/qqrobot/archive/refs/tags/v1.0.2.tar.gz -o qqrobot-v1.0.2.tar.gz
+rm -rf qqrobot-v1.0.2 && mkdir -p qqrobot-v1.0.2
+tar -xzf qqrobot-v1.0.2.tar.gz --strip-components=1 -C qqrobot-v1.0.2
+sudo cp -a qqrobot-v1.0.2/. /opt/qq-math-bot/
+sudo systemctl restart qq-math-bot
+grep -x 1.0.2 /opt/qq-math-bot/VERSION
+```
+
 ## 从 v1.0.0 升级到 v1.0.1
 
 v1.0.1 不动 `.env` 结构，但有三项时间预算和一次面板同步要手动做。

@@ -299,6 +299,40 @@ def test_check_treats_the_quoted_problem_and_current_draft_as_separate_materials
         bot.store.close()
 
 
+def test_book_list_shows_only_numbered_titles_three_per_row(tmp_path):
+    from book_library import BookLibrary
+
+    bot = make_bot(tmp_path)
+    library = BookLibrary(tmp_path)
+    source = tmp_path / "book.pdf"
+    with pdfium.PdfDocument.new() as pdf:
+        pdf.new_page(100, 100).close()
+        pdf.save(source)
+    for title in ("数学分析", "高等代数", "常微分方程", "实变函数论与泛函分析初步"):
+        with library.staged_pdf() as staged:
+            shutil.copyfile(source, staged)
+            library.add(staged, title, "简介不应出现在列表里")
+    calls = []
+
+    async def send_command_choices(kind, target, text, choices, msg_id=None, msg_seq=None,
+                                   per_row=1):
+        calls.append((text, choices, per_row))
+
+    bot.media.send_command_choices = send_command_choices
+    try:
+        asyncio.run(bot._dispatch_command(context(), "/书库", "", []))
+        text, choices, per_row = calls[0]
+        assert text.splitlines() == [
+            "1.《数学分析》", "2.《高等代数》", "3.《常微分方程》", "4.《实变函数论与泛函分析初步》"]
+        assert "B0001" not in text and " 1 页" not in text and "简介不应出现" not in text
+        assert [command for _, command in choices] == [
+            "/引用 B0001", "/引用 B0002", "/引用 B0003", "/引用 B0004"]
+        assert choices[3][0] == "4.《实变函数论与泛函分析…》"
+        assert per_row == 3
+    finally:
+        bot.store.close()
+
+
 def test_removed_commands_are_excluded_from_help_and_panel():
     from qq_panel import GROUP_COMMANDS
     from task_commands import HELP

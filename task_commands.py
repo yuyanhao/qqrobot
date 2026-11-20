@@ -271,7 +271,7 @@ class TaskCommands:
             rows = self.store.recent_question_choices(
                 context.owner, ttl_days=self.settings.result_ttl,
                 states=PICKER_STATES.get(action, ()), needs_confirmation=action == "确认题干",
-                ready_to_check=action == "查错",
+                ready_to_check=action == "查错", limit=4 if action == "最近" else 3,
             )
             beijing = timezone(timedelta(hours=8))
             candidates = [(row["task_id"], datetime.fromtimestamp(row["created"], beijing).strftime("%m-%d %H:%M")
@@ -283,8 +283,11 @@ class TaskCommands:
                 await self._text(context, "没有可继续查错的题目。")
             return False
 
-        lines = (["最近题目，点题号填入输入框。"] if action == "最近"
-                 else [f"用法：/{action} 题号{QUESTION_ID_COMMANDS[action]}"])
+        if action == "最近":
+            ids = [tid for tid, _ in candidates[:4]]
+            await self._command_choices(context, "\n".join(ids), [(tid, tid) for tid in ids], per_row=2)
+            return True
+        lines = [f"用法：/{action} 题号{QUESTION_ID_COMMANDS[action]}"]
         choices = []
         for index, (tid, status) in enumerate(candidates, 1):
             command = tid if action == "最近" else f"/{action} {tid}"
@@ -681,27 +684,20 @@ class TaskCommands:
                 book = library.get_by_display_id(args)
                 await self._text(context, f"《{book['title']}》{book['pages']} 页：发 /引用 {book['id']} 第3页 [要求]。")
                 return
-            if args and not re.fullmatch(r"[1-9][0-9]{0,5}", args):
-                await self._text(context, "用法：/书库 [页] 或 /引用 B0001 第3页。")
+            if args:
+                await self._text(context, "发 /书库 查看全部书籍。")
                 return
-            page = int(args or "1")
-            size = 5
-            books = library.list(size + 1, (page - 1) * size)
+            books = library.list(200)
             if not books:
-                await self._text(context, "这一页没有书籍。")
+                await self._text(context, "书库还是空的。")
                 return
-            lines, choices = ["共享书库｜第 " + str(page) + " 页"], []
-            for book in books[:size]:
-                command = f"/引用 {book['id']}"
-                lines.append(f"{book['id']} 《{book['title']}》 · {book['pages']} 页")
-                if book["summary"]:
-                    lines.append(book["summary"])
-                lines.append(command)
-                choices.append((book["id"], command))
-            lines.append("点编号后补页码，如 /引用 B0001 第3页。")
-            if len(books) > size:
-                lines.append(f"下一页：/书库 {page + 1}")
-            await self._command_choices(context, "\n".join(lines), choices)
+            lines, choices = [], []
+            for index, book in enumerate(books, 1):
+                title = book["title"]
+                lines.append(f"{index}.《{title}》")
+                short = title if len(title) <= 10 else title[:10] + "…"
+                choices.append((f"{index}.《{short}》", f"/引用 {book['id']}"))
+            await self._command_choices(context, "\n".join(lines), choices, per_row=3)
         except ClientError:
             await self._text(context, "下载中断，请重发 PDF。")
         except (PDFError, ValueError, DownloadError, OSError, sqlite3.Error) as exc:

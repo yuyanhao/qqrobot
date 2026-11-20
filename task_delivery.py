@@ -83,11 +83,14 @@ class TaskDelivery:
                 return False
         return True
 
-    async def _command_choices(self, context, text, choices):
+    async def _command_choices(self, context, text, choices, *, per_row=1):
         send_choices = getattr(self.media, "send_command_choices", None)
         if send_choices:
+            async def layout(kind, target, content, buttons, msg_id=None, msg_seq=None):
+                await send_choices(kind, target, content, buttons, msg_id, msg_seq, per_row)
+
             try:
-                await self._send(context, send_choices, text, choices)
+                await self._send(context, layout, text, choices)
                 return
             except QQMediaError as exc:
                 log.info("command_buttons_unavailable category=%s status=%s code=%s",

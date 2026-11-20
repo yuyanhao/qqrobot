@@ -116,7 +116,7 @@ class TaskStore:
             "SELECT * FROM tasks WHERE owner=? ORDER BY id DESC LIMIT ?", (owner, limit))]
 
     def recent_question_choices(self, owner, *, ttl_days=7, states=(), needs_confirmation=False,
-                                ready_to_check=False):
+                                ready_to_check=False, limit=3):
         threshold = time.time() - ttl_days * 86400
         active_slots = ",".join("?" for _ in ACTIVE)
         sql = f"""SELECT task_id,state,created FROM tasks WHERE owner=? AND state!='expired'
@@ -140,7 +140,7 @@ class TaskStore:
                     AND favorites.problem!=''
                     AND coalesce(json_extract(favorites.question_ocr,'$.needs_confirmation'),0)!=1
                 )))"""
-        return self.db.execute(sql + " ORDER BY id DESC LIMIT 3", params).fetchall()
+        return self.db.execute(sql + " ORDER BY id DESC LIMIT ?", [*params, int(limit)]).fetchall()
 
     def confirmation_successor(self, task_id, owner):
         row = self.db.execute("""SELECT task_id FROM tasks

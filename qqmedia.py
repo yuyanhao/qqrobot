@@ -177,18 +177,19 @@ class QQMedia:
     async def send_text(self, kind, target, text, msg_id=None, msg_seq=None):
         await self._send_payload(kind, target, {"msg_type": 0, "content": text}, msg_id, msg_seq)
 
-    async def send_command_choices(self, kind, target, text, choices, msg_id=None, msg_seq=None):
-        rows = [
-            {"buttons": [{
-                "id": str(index),
-                "render_data": {"label": label, "visited_label": label, "style": 1},
-                "action": {
-                    "type": 2, "permission": {"type": 2}, "data": command,
-                    "enter": False, "reply": False, "unsupport_tips": "请复制消息中的指令。",
-                },
-            }]}
-            for index, (label, command) in enumerate(choices, 1)
-        ]
+    async def send_command_choices(self, kind, target, text, choices, msg_id=None, msg_seq=None,
+                                   per_row=1):
+        per_row = max(1, min(int(per_row), 5))
+        buttons = [{
+            "id": str(index),
+            "render_data": {"label": label, "visited_label": label, "style": 1},
+            "action": {
+                "type": 2, "permission": {"type": 2}, "data": command,
+                "enter": False, "reply": False, "unsupport_tips": "请复制消息中的指令。",
+            },
+        } for index, (label, command) in enumerate(choices, 1)]
+        rows = [{"buttons": buttons[start:start + per_row]}
+                for start in range(0, len(buttons), per_row)]
         payload = {"msg_type": 2, "markdown": {"content": text},
                    "keyboard": {"content": {"rows": rows}}}
         await self._send_payload(kind, target, payload, msg_id, msg_seq)

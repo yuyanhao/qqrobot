@@ -335,7 +335,8 @@ def test_registration_ack_offers_a_task_id_button(tmp_path):
         bot = make_bot(tmp_path)
         calls = []
 
-        async def send_command_choices(kind, target, text, choices, msg_id=None, msg_seq=None):
+        async def send_command_choices(kind, target, text, choices, msg_id=None, msg_seq=None,
+                                       per_row=1):
             calls.append((text, choices))
 
         bot.media.send_command_choices = send_command_choices
@@ -349,6 +350,29 @@ def test_registration_ack_offers_a_task_id_button(tmp_path):
             assert bot.queue.qsize() == 1
         finally:
             bot.store.close()
+    asyncio.run(check())
+
+
+def test_command_buttons_wrap_three_per_row():
+    from qqmedia import QQMedia
+
+    async def check():
+        media = QQMedia("app", "plain-secret", active_delivery=False)
+        captured = {}
+
+        async def payload(kind, target, data, msg_id, msg_seq):
+            captured.update(data)
+
+        media._send_payload = payload
+        try:
+            await media.send_command_choices(
+                "c2c", "u", "text",
+                [(f"L{index}", f"/cmd {index}") for index in range(5)], per_row=3)
+        finally:
+            await media.close()
+        rows = captured["keyboard"]["content"]["rows"]
+        assert [len(row["buttons"]) for row in rows] == [3, 2]
+        assert rows[1]["buttons"][0]["action"]["data"] == "/cmd 3"
     asyncio.run(check())
 
 
