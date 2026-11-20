@@ -2,7 +2,7 @@ import time
 
 import pytest
 
-from task_store import QueueFull, TaskStore, describe
+from qqrobot.tasks.task_store import QueueFull, TaskStore, describe
 
 
 @pytest.fixture
@@ -77,9 +77,9 @@ def test_append_preserves_order_and_deduplicates_hash_or_url(store):
 
 
 def test_attachment_limit_rejection_is_atomic_and_does_not_consume_message_id(store):
-    task = draft(store, text="原文", attachments=[image(i) for i in range(1, 13)])
-    with pytest.raises(ValueError, match="12"):
-        store.append_materials(task["task_id"], "alice", text="不得部分保存", attachments=[image(13)], message_id="retry")
+    task = draft(store, text="原文", attachments=[image(i) for i in range(1, 6)])
+    with pytest.raises(ValueError, match="5"):
+        store.append_materials(task["task_id"], "alice", text="不得部分保存", attachments=[image(6)], message_id="retry")
     assert store.get(task["task_id"])["request"] == task["request"]
     updated, added = store.append_materials(task["task_id"], "alice", text="合法重发", attachments=[image(1)], message_id="retry")
     assert added == 0 and updated["request"]["text"].endswith("合法重发")
@@ -173,7 +173,7 @@ def test_expired_collection_is_cleaned_using_existing_retention(store):
 def test_collection_progress_explains_attachment_count_and_next_commands(store):
     task = draft(store, attachments=[image(1), image(2)])
     text = describe(task)
-    assert "收集中" in text and "2 个附件" in text and "尚未开始" in text
+    assert "收集中" not in text and "2 张" in text
     assert f"/补图 {task['task_id']}" in text and f"/解题 {task['task_id']}" in text
     assert f"/查错 {task['task_id']}" in text
 

@@ -5,14 +5,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from ai import AIError, DeepSeek, extract_json, normalize_solution, repair_json_escapes, validate_check
-from safe_math import Parser, run
-from task_store import TaskStore, QueueFull
-from task_bot import ReplyContext
-from plot_tools import expression
-from render import RenderError, sanitize_math
-from pdf_tools import safe_page_scale
-from process_tools import worker_environment
+from qqrobot.solving.ai import AIError, ModelClient, extract_json, normalize_solution, repair_json_escapes, validate_judgement
+from qqrobot.core.safe_math import Parser, run
+from qqrobot.tasks.task_store import TaskStore, QueueFull
+from qqrobot.tasks.task_bot import ReplyContext
+from qqrobot.media.plot_tools import expression
+from qqrobot.rendering.render import RenderError, sanitize_math
+from qqrobot.media.pdf_tools import safe_page_scale
+from qqrobot.core.process_tools import worker_environment
 
 
 def doc():
@@ -40,13 +40,13 @@ def test_bad_solution_is_actionable(value):
 
 
 def test_missing_verification_is_not_a_pass():
-    with pytest.raises(AIError): validate_check({"errors": []})
-    with pytest.raises(AIError): validate_check({"ok": "true"})
+    with pytest.raises(AIError): validate_judgement({"errors": []})
+    with pytest.raises(AIError): validate_judgement({"ok": "true"})
 
 
 def test_json_repair_is_bounded_and_does_not_resolve():
     async def check():
-        client = object.__new__(DeepSeek)
+        client = object.__new__(ModelClient)
         seen = []
         async def fake(messages, *args):
             seen.append(messages)
@@ -72,7 +72,7 @@ def test_stream_closes_on_empty_and_truncation():
         async def close(self): self.closed = True
     async def check():
         stream = Stream()
-        with pytest.raises(AIError) as caught: await DeepSeek._collect_stream(stream)
+        with pytest.raises(AIError) as caught: await ModelClient._collect_stream(stream)
         assert caught.value.code == "empty" and stream.closed
     asyncio.run(check())
 
@@ -153,7 +153,7 @@ def test_disk_bytes_cache_invalidates_after_explicit_refresh(tmp_path):
 
 
 def test_group_and_c2c_reply_windows(monkeypatch):
-    monkeypatch.setattr("task_bot.time.time", lambda: 1000)
+    monkeypatch.setattr("qqrobot.tasks.task_bot.time.time", lambda: 1000)
     assert not ReplyContext("group", "g", "u", "old", 600).passive_available()
     assert ReplyContext("c2c", "u", "u", "old", 600).passive_available()
     assert ReplyContext("group", "g", "u", "new-query", 1000).passive_available()

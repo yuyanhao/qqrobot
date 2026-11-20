@@ -4,8 +4,8 @@ import shutil
 
 import pytest
 
-from render import RenderError, sanitize_math
-from render_service import render_artifacts_async
+from qqrobot.rendering.render import RenderError, sanitize_math
+from qqrobot.rendering.render_service import render_artifacts_async
 
 
 @pytest.mark.parametrize("formula", [r"0\preceq A\preceq B", r"B\succeq A\succeq 0"])

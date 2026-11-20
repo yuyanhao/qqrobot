@@ -1,5 +1,140 @@
 # 升级指南
 
+## 从 v1.0.4 升级到 v1.0.5（不需要修改 `.env`）
+
+v1.0.5 默认供应商仍是 DeepSeek，现有 `.env` 里的 `DEEPSEEK_API_KEY`、`DEEPSEEK_MODEL`、`VISION_MODEL` 等变量会作为新配置的回退值继续生效。代码已移入 `qqrobot/` 包，启动命令由 `task_bot.py` 改为 `python -m qqrobot`，因此**必须用新版 `setup.sh` 更新 systemd 单元**，不能只把代码解压覆盖到 `/opt/qq-math-bot`。
+
+先等待当前任务完成，只备份配置与数据：
+
+```bash
+sudo systemctl stop qqbot 2>/dev/null || true
+sudo systemctl stop qq-math-bot
+stamp=$(date +%Y%m%d-%H%M%S)
+sudo tar -czf "/root/qq-math-bot-before-v1.0.5-$stamp.tar.gz" -C /opt/qq-math-bot .env data
+cd /tmp
+curl -fL https://github.com/yuyanhao/qqrobot/archive/refs/tags/v1.0.5.tar.gz -o qqrobot-v1.0.5.tar.gz
+rm -rf qqrobot-v1.0.5 && mkdir -p qqrobot-v1.0.5
+tar -xzf qqrobot-v1.0.5.tar.gz --strip-components=1 -C qqrobot-v1.0.5
+cd qqrobot-v1.0.5
+sudo bash setup.sh
+sudo -u qqbot /opt/qq-math-bot/.venv/bin/python -m qqrobot.panel --apply
+grep -x 1.0.5 /opt/qq-math-bot/VERSION
+```
+
+检查：
+
+```bash
+sudo systemctl status qq-math-bot --no-pager
+sudo journalctl -u qq-math-bot -n 100 --no-pager
+```
+
+`setup.sh` 会保留 `/opt/qq-math-bot/.env` 与 `data/`，复制 `qqrobot/`、`skills/` 和 `VERSION`，更新依赖、重写 systemd 单元并重启服务。旧的扁平 `*.py` 文件会留在安装目录，但不会被新入口加载；确认运行正常后可以删除。
+
+以后要换模型时，只需在同一份 `.env` 里追加以下变量（不需要删掉原来的 `DEEPSEEK_*`）：
+
+```dotenv
+LLM_PROVIDER=openai
+LLM_API_KEY=你的模型密钥
+LLM_MODEL=你的模型名
+LLM_VISION_MODEL=支持图片的模型名
+```
+
+然后 `sudo systemctl restart qq-math-bot`。DeepSeek 部署不需要加任何新变量。Docker 部署把上面的代码更新换成：
+
+```bash
+cd /path/to/qqrobot
+git fetch --tags
+git checkout v1.0.5
+docker compose up -d --build
+docker compose exec qqbot python -m qqrobot.panel --apply
+```
+
+## 从 v1.0.3 升级到 v1.0.4
+
+只改代码和面板，不动 `.env` 结构（时间预算若还没调，顺手同步）：
+
+```bash
+sudo systemctl stop qq-math-bot
+stamp=$(date +%Y%m%d-%H%M%S)
+sudo tar -czf "/root/qq-math-bot-before-v1.0.4-$stamp.tar.gz" -C /opt/qq-math-bot .env data
+cd /tmp
+curl -fsSL https://github.com/yuyanhao/qqrobot/archive/refs/tags/v1.0.4.tar.gz | sudo tar -xzf - -C /opt/qq-math-bot --strip-components=1
+sudo systemctl start qq-math-bot
+sudo -u qqbot /opt/qq-math-bot/.venv/bin/python /opt/qq-math-bot/qq_panel.py --apply
+grep -x 1.0.4 /opt/qq-math-bot/VERSION
+```
+
+## 从 v1.0.2 升级到 v1.0.3
+
+只改 `/最近` 的发送方式，不动 `.env`、数据库和面板：
+
+```bash
+cd /tmp
+curl -fL https://github.com/yuyanhao/qqrobot/archive/refs/tags/v1.0.3.tar.gz -o qqrobot-v1.0.3.tar.gz
+rm -rf qqrobot-v1.0.3 && mkdir -p qqrobot-v1.0.3
+tar -xzf qqrobot-v1.0.3.tar.gz --strip-components=1 -C qqrobot-v1.0.3
+sudo cp -a qqrobot-v1.0.3/. /opt/qq-math-bot/
+sudo systemctl restart qq-math-bot
+grep -x 1.0.3 /opt/qq-math-bot/VERSION
+```
+
+## 从 v1.0.1 升级到 v1.0.2
+
+只改消息文案，不动 `.env`、数据库和面板。覆盖代码后重启即可：
+
+```bash
+cd /tmp
+curl -fL https://github.com/yuyanhao/qqrobot/archive/refs/tags/v1.0.2.tar.gz -o qqrobot-v1.0.2.tar.gz
+rm -rf qqrobot-v1.0.2 && mkdir -p qqrobot-v1.0.2
+tar -xzf qqrobot-v1.0.2.tar.gz --strip-components=1 -C qqrobot-v1.0.2
+sudo cp -a qqrobot-v1.0.2/. /opt/qq-math-bot/
+sudo systemctl restart qq-math-bot
+grep -x 1.0.2 /opt/qq-math-bot/VERSION
+```
+
+## 从 v1.0.0 升级到 v1.0.1
+
+v1.0.1 不动 `.env` 结构，但有三项时间预算和一次面板同步要手动做。
+
+1. 停服务并备份（保留原 `.env` 与 `data/`）：
+
+   ```bash
+   sudo systemctl stop qq-math-bot
+   stamp=$(date +%Y%m%d-%H%M%S)
+   sudo tar -czf "/root/qq-math-bot-before-v1.0.1-$stamp.tar.gz" -C /opt/qq-math-bot .env data
+   ```
+
+2. 下载并覆盖代码。压缩包里没有 `.env`、`data/`、`.venv/`，直接复制不会动到它们：
+
+   ```bash
+   cd /tmp
+   curl -fL https://github.com/yuyanhao/qqrobot/archive/refs/tags/v1.0.1.tar.gz -o qqrobot-v1.0.1.tar.gz
+   rm -rf qqrobot-v1.0.1 && mkdir -p qqrobot-v1.0.1
+   tar -xzf qqrobot-v1.0.1.tar.gz --strip-components=1 -C qqrobot-v1.0.1
+   sudo cp -a qqrobot-v1.0.1/. /opt/qq-math-bot/
+   ```
+
+   用 Git 目录部署时改用：`git fetch --tags && git checkout v1.0.1`。
+
+3. 更新 `.env` 的三项时间预算（已有 `.env` 会覆盖代码默认值，不改就仍是旧值）：
+
+   ```dotenv
+   SOLVE_TIMEOUT=900
+   VERIFY_TIMEOUT=600
+   TASK_TIMEOUT=1800
+   ```
+
+4. 启动、同步面板并确认版本：
+
+   ```bash
+   sudo systemctl start qq-math-bot
+   sudo -u qqbot /opt/qq-math-bot/.venv/bin/python /opt/qq-math-bot/qq_panel.py --apply
+   grep -x 1.0.1 /opt/qq-math-bot/VERSION
+   ```
+
+   Docker 部署把第 2、4 步换成 `docker compose up -d --build` 和
+   `docker compose exec qqbot python qq_panel.py --apply`。
+
 ## 从 v0.2.6 升级到 v1.0.0
 
 先按[备份指南](backup.md)停止服务并备份 `.env`、代码和整个 `data` 目录。升级会保留 SQLite 任务记录、收藏、附件和共享书库；应用启动时按需迁移数据库结构。**不要用 `.env.example` 覆盖现有 `.env`。**
@@ -62,7 +197,7 @@ docker compose exec qqbot python qq_panel.py --apply
 
 ## 验证
 
-1. 服务状态和日志无 traceback；`VERSION` 为 `1.0.0`。
+1. 服务状态和日志无 traceback；`VERSION` 与当前发布版本一致（v1.0.5 为 `1.0.5`）。
 2. 在 QQ 私聊和群聊分别验证：`/帮助`、文字题、图片题、指定 PDF 页、查询、追问、取消和结果领取。
 3. 验证新流程：`/收集` 多张材料 → `/解题 收集号`；`/收集` 题目和草稿 → `/查错 收集号`；`/取消`。
 4. 面板显示 `/查错`、`/解题`、`/取消` 的新说明。

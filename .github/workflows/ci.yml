@@ -41,6 +41,6 @@ jobs:
       - name: Check release metadata
         run: python tools/check_release.py
       - name: Validate offline configuration
-        run: python settings.py --allow-missing-credentials
+        run: python -m qqrobot.settings --allow-missing-credentials
       - name: Run test suite
         run: python -m pytest -q

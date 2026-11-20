@@ -3,10 +3,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from file_tools import DownloadError
-from input_cache import (InputCacheError, cache_attachments, discard_cached_attachments,
+from qqrobot.media.file_tools import DownloadError
+from qqrobot.core.input_cache import (InputCacheError, cache_attachments, discard_cached_attachments,
                          read_cached_attachment)
-from task_store import TaskStore
+from qqrobot.tasks.task_store import TaskStore
 
 
 @pytest.fixture
@@ -37,7 +37,7 @@ def downloader(monkeypatch, contents):
             raise value
         return SimpleNamespace(data=value)
 
-    monkeypatch.setattr("input_cache.download_file", download)
+    monkeypatch.setattr("qqrobot.core.input_cache.download_file", download)
     return calls
 
 
@@ -210,22 +210,6 @@ def test_per_message_attachment_limit_is_enforced_before_downloading(store, monk
         else:
             assert len(await cache_attachments(store, task, sources)) == 4
             assert len(calls) == 4
-
-    asyncio.run(check())
-
-
-def test_total_twelve_attachment_limit_preserves_existing_cache(store, monkeypatch):
-    sources = [attachment(str(index)) for index in range(13)]
-    downloader(monkeypatch, {item["url"]: f"image-{index}".encode("ascii") for index, item in enumerate(sources)})
-
-    async def check():
-        task = collection(store)
-        for offset in range(0, 12, 4):
-            task, _ = await cache_and_save(store, task, sources[offset:offset + 4])
-        previous = input_files(store, task)
-        with pytest.raises(InputCacheError, match="12 个附件"):
-            await cache_attachments(store, task, sources[12:])
-        assert input_files(store, task) == previous and len(previous) == 12
 
     asyncio.run(check())
 

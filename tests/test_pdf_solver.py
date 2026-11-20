@@ -8,11 +8,11 @@ from PIL import Image
 import pypdfium2 as pdfium
 import pytest
 
-from ai import AIError
-from file_tools import DownloadedFile
-from pdf_tools import PDFError
-from solver import InputError, Solver, followup_solution_summary
-from task_store import TaskStore
+from qqrobot.solving.ai import AIError
+from qqrobot.media.file_tools import DownloadedFile
+from qqrobot.media.pdf_tools import PDFError
+from qqrobot.solving.solver import InputError, Solver, followup_solution_summary
+from qqrobot.tasks.task_store import TaskStore
 
 
 PDF_ATTACHMENT = {"url": "https://example.com/questions.pdf", "name": "questions.pdf"}
@@ -54,7 +54,7 @@ def mock_download(monkeypatch, pdf_data=b"synthetic PDF"):
         number = int(re.search(r"page-(\d+)", url).group(1))
         return DownloadedFile(png(number), f"page-{number}.png", "image/png", url)
 
-    monkeypatch.setattr("solver.download_file", download)
+    monkeypatch.setattr("qqrobot.solving.solver.download_file", download)
     return calls
 
 
@@ -74,7 +74,7 @@ def mock_pdf_batches(monkeypatch, numbers, *, total=None, selected=False, error=
         finally:
             events.append("closed")
 
-    monkeypatch.setattr("solver.render_input_pdf_batches_async", render)
+    monkeypatch.setattr("qqrobot.solving.solver.render_input_pdf_batches_async", render)
     return events, calls
 
 
@@ -125,7 +125,7 @@ def test_legacy_check_task_cannot_exceed_aggregate_pdf_page_limit(tmp_path, monk
             async def forbidden_download(*args, **kwargs):
                 raise AssertionError("PDF validation must happen before download or OCR")
 
-            monkeypatch.setattr("solver.download_file", forbidden_download)
+            monkeypatch.setattr("qqrobot.solving.solver.download_file", forbidden_download)
             with pytest.raises(InputError, match="超过上限 5 页"):
                 await Solver(store, Recognizer(), SimpleNamespace()).run_study(
                     task, store.task_dir(task["task_id"]))
@@ -143,7 +143,7 @@ def test_legacy_pdf_task_without_selection_is_rejected_before_download(tmp_path,
             async def forbidden_download(*args, **kwargs):
                 raise AssertionError("PDF validation must happen before download or OCR")
 
-            monkeypatch.setattr("solver.download_file", forbidden_download)
+            monkeypatch.setattr("qqrobot.solving.solver.download_file", forbidden_download)
             with pytest.raises(InputError, match="明确指定页码"):
                 await Solver(store, Recognizer(), SimpleNamespace()).inputs(
                     task, store.task_dir(task["task_id"]))

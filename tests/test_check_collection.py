@@ -3,7 +3,7 @@ import time
 
 from test_collection_commands import (attachment, handle, make_bot,
                                      mock_cache_download)
-from task_bot import ReplyContext
+from qqrobot.tasks.task_bot import ReplyContext
 
 
 class RolesAI:
@@ -149,7 +149,7 @@ def test_single_image_with_typed_draft_treats_the_image_as_the_question(tmp_path
     asyncio.run(check())
 
 
-def test_solve_command_starts_a_collection_and_keeps_the_start_alias(tmp_path, monkeypatch):
+def test_solve_command_starts_a_collection(tmp_path, monkeypatch):
     async def check():
         bot = make_bot(tmp_path)
         try:
@@ -159,12 +159,6 @@ def test_solve_command_starts_a_collection_and_keeps_the_start_alias(tmp_path, m
             await handle(bot, f"/解题 {tid}", "solve")
             assert bot.store.get(tid)["state"] == "queued"
             assert bot.queue.get_nowait() == tid
-
-            await handle(bot, "/收集", "second", [attachment(2)])
-            alias_tid = bot.store.collecting("u")["task_id"]
-            await handle(bot, f"/开始 {alias_tid}", "alias")
-            assert bot.store.get(alias_tid)["state"] == "queued"
-            assert bot.queue.get_nowait() == alias_tid
         finally:
             bot.store.close()
     asyncio.run(check())

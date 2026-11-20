@@ -5,7 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from ai import AIError, DeepSeek
+from ai_fixtures import model_client
+from qqrobot.solving.ai import AIError, ModelClient
 
 
 def document():
@@ -34,7 +35,7 @@ def test_long_reasoning_budget_reaches_actual_solve_and_verify(monkeypatch, effo
     async def check():
         monkeypatch.delenv("SOLVE_MAX_TOKENS", raising=False)
         monkeypatch.delenv("VERIFY_MAX_TOKENS", raising=False)
-        ai = DeepSeek("fake-key", "https://api.deepseek.com", "deepseek-flash", effort)
+        ai = model_client(reasoning_effort=effort)
         calls, streams = [], []
         async def create(**kwargs):
             calls.append(kwargs)
@@ -59,7 +60,7 @@ def test_long_reasoning_budget_reaches_actual_solve_and_verify(monkeypatch, effo
 def test_token_budget_overrides_and_limits(monkeypatch):
     monkeypatch.setenv("SOLVE_MAX_TOKENS", "96000")
     monkeypatch.setenv("VERIFY_MAX_TOKENS", "9999999")
-    ai = DeepSeek("fake-key", "https://api.deepseek.com", "deepseek-flash", "max")
+    ai = model_client(reasoning_effort="max")
     try:
         assert ai.solve_max_tokens == 96000
         assert ai.verify_max_tokens == 131072
@@ -71,7 +72,7 @@ def test_length_never_passes_as_complete_or_logs_reasoning(caplog):
     async def check():
         stream = Stream(json.dumps(document()), "length")
         with pytest.raises(AIError) as caught:
-            await DeepSeek._collect_stream(stream)
+            await ModelClient._collect_stream(stream)
         assert caught.value.code == "truncated" and stream.closed
         assert "private-reasoning-fixture" not in caplog.text
     asyncio.run(check())

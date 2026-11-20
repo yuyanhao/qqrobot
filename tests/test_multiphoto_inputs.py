@@ -8,10 +8,10 @@ from urllib.parse import urlparse
 from PIL import Image
 import pytest
 
-from file_tools import DownloadError, DownloadedFile
-from solver import InputError, Solver, normalize_image
-from task_bot import RAW_EVENTS, TaskBot
-from task_store import TaskStore
+from qqrobot.media.file_tools import DownloadError, DownloadedFile
+from qqrobot.solving.solver import InputError, Solver, normalize_image
+from qqrobot.tasks.task_bot import RAW_EVENTS, TaskBot
+from qqrobot.tasks.task_store import TaskStore
 
 
 def png(number):
@@ -65,7 +65,7 @@ def mock_image_download(monkeypatch):
         calls.append(number)
         return DownloadedFile(png(number), f"page-{number}.png", "image/png", url)
 
-    monkeypatch.setattr("solver.download_file", download)
+    monkeypatch.setattr("qqrobot.solving.solver.download_file", download)
     return calls
 
 
@@ -177,8 +177,8 @@ def test_followup_pdf_pages_reach_recognition_and_keep_page_notes(tmp_path, monk
                 renders.append((data, text, max_pages, auto_pages))
                 yield [png(3), png(4)], 6, [3, 4], True
 
-            monkeypatch.setattr("solver.download_file", download)
-            monkeypatch.setattr("solver.render_input_pdf_batches_async", render)
+            monkeypatch.setattr("qqrobot.solving.solver.download_file", download)
+            monkeypatch.setattr("qqrobot.solving.solver.render_input_pdf_batches_async", render)
             ai = Recognizer()
             task, _ = store.create("u", "pdf-followup", "c2c", "u", {
                 "parent_id": parent["task_id"], "action": "补充", "text": "读取第3-4页",
@@ -207,7 +207,7 @@ def test_followup_text_attachment_is_added_without_downloading_parent_again(tmp_
                 calls.append(url)
                 return DownloadedFile("新增条件：a > 0。".encode("utf-8"), "condition.txt", "text/plain", url)
 
-            monkeypatch.setattr("solver.download_file", download)
+            monkeypatch.setattr("qqrobot.solving.solver.download_file", download)
             task, _ = store.create("u", "text-followup", "c2c", "u", {
                 "parent_id": parent["task_id"], "action": "补充", "text": "条件见附件",
                 "attachments": [{"url": "https://example.com/condition.txt", "name": "condition.txt"}]})
@@ -289,7 +289,7 @@ def test_parent_image_download_failure_is_not_silently_ignored(tmp_path, monkeyp
             async def unavailable(*args, **kwargs):
                 raise DownloadError("expired synthetic image URL")
 
-            monkeypatch.setattr("solver.download_file", unavailable)
+            monkeypatch.setattr("qqrobot.solving.solver.download_file", unavailable)
             task, _ = store.create("u", "bad-image", "c2c", "u", {
                 "parent_id": parent["task_id"], "action": "补充", "text": "", "attachments": [image_attachment(1)]})
             with pytest.raises(InputError, match="重新上传|重发|下载失败"):

@@ -55,7 +55,7 @@ def catalogue():
 
 
 def merge(names):
-    path = APP / "render.py"
+    path = APP / "qqrobot" / "rendering" / "render.py"
     source = path.read_text(encoding="utf-8")
     assignment = next(node for node in ast.parse(source).body if isinstance(node, ast.Assign)
                       and any(isinstance(target, ast.Name) and target.id == "_MATH_COMMANDS" for target in node.targets))

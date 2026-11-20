@@ -4,9 +4,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from search_tools import DEFAULT_ENDPOINT, SearchError, deepseek_search, parse_results
-from solver import Solver
-from task_store import TaskStore
+from qqrobot.solving.search_tools import DEFAULT_ENDPOINT, SearchError, parse_results, web_search
+from qqrobot.solving.solver import Solver
+from qqrobot.tasks.task_store import TaskStore
 
 
 def fake_session(monkeypatch, data, status=200, error=None):
@@ -42,7 +42,7 @@ def fake_session(monkeypatch, data, status=200, error=None):
             seen.append({"endpoint": endpoint, **kwargs})
             return Response()
 
-    monkeypatch.setattr("search_tools.aiohttp.ClientSession", Session)
+    monkeypatch.setattr("qqrobot.solving.search_tools.aiohttp.ClientSession", Session)
     return seen
 
 
@@ -53,7 +53,7 @@ def page():
 
 def test_native_search_uses_deepseek_key_official_schema_and_content(monkeypatch):
     seen = fake_session(monkeypatch, {"results": [page()]})
-    result = asyncio.run(deepseek_search("synthetic-deepseek-key", "  中文定理  ", count=4))
+    result = asyncio.run(web_search("synthetic-deepseek-key", "  中文定理  ", count=4))
     assert seen[1] == {"endpoint": DEFAULT_ENDPOINT,
                        "json": {"query": "中文定理", "need_content": True, "count": 4},
                        "headers": {"Authorization": "Bearer synthetic-deepseek-key", "Content-Type": "application/json"}}
@@ -65,7 +65,7 @@ def test_native_search_uses_deepseek_key_official_schema_and_content(monkeypatch
 @pytest.mark.parametrize("count,expected", [(0, 1), (100, 50)])
 def test_search_respects_unicode_query_and_result_limits(monkeypatch, count, expected):
     seen = fake_session(monkeypatch, {"results": []})
-    assert asyncio.run(deepseek_search("fake", "数" * 200, count=count)) == []
+    assert asyncio.run(web_search("fake", "数" * 200, count=count)) == []
     assert seen[1]["json"]["query"] == "数" * 128
     assert seen[1]["json"]["count"] == expected
 
@@ -74,7 +74,7 @@ def test_search_respects_unicode_query_and_result_limits(monkeypatch, count, exp
 def test_invalid_search_input_never_sends_request(monkeypatch, key, query, match):
     seen = fake_session(monkeypatch, {"results": []})
     with pytest.raises(SearchError, match=match):
-        asyncio.run(deepseek_search(key, query))
+        asyncio.run(web_search(key, query))
     assert not seen
 
 
@@ -83,7 +83,7 @@ def test_invalid_search_input_never_sends_request(monkeypatch, key, query, match
 def test_api_errors_are_explicit_without_echoing_credentials(monkeypatch, status, match):
     fake_session(monkeypatch, {"error": "synthetic-secret"}, status=status)
     with pytest.raises(SearchError, match=match) as caught:
-        asyncio.run(deepseek_search("synthetic-secret", "定理"))
+        asyncio.run(web_search("synthetic-secret", "定理"))
     assert "synthetic-secret" not in str(caught.value)
 
 
@@ -92,13 +92,13 @@ def test_api_errors_are_explicit_without_echoing_credentials(monkeypatch, status
 def test_invalid_response_is_not_reported_as_empty_success(monkeypatch, data, match):
     fake_session(monkeypatch, data)
     with pytest.raises(SearchError, match=match):
-        asyncio.run(deepseek_search("fake", "定理"))
+        asyncio.run(web_search("fake", "定理"))
 
 
 def test_network_failure_is_reported_without_echoing_exception_secrets(monkeypatch):
     fake_session(monkeypatch, {}, error=TimeoutError("synthetic-secret"))
     with pytest.raises(SearchError, match="TimeoutError") as caught:
-        asyncio.run(deepseek_search("fake", "定理"))
+        asyncio.run(web_search("fake", "定理"))
     assert "synthetic-secret" not in str(caught.value)
 
 
@@ -118,8 +118,8 @@ def test_search_evidence_includes_date_and_bounded_body_without_local_crawling(m
     async def no_download(*args, **kwargs):
         raise AssertionError("native search must supply content")
 
-    monkeypatch.setattr("solver.deepseek_search", search)
-    monkeypatch.setattr("solver.download_file", no_download)
+    monkeypatch.setattr("qqrobot.solving.solver.web_search", search)
+    monkeypatch.setattr("qqrobot.solving.solver.download_file", no_download)
     config = SimpleNamespace(search=True, search_key="fake-deepseek", search_endpoint=DEFAULT_ENDPOINT)
     evidence, sources = asyncio.run(Solver(None, None, config).search("定理"))
     assert "检索日期（北京时间）" in evidence and page()["date"] in evidence
@@ -159,8 +159,8 @@ def test_both_search_paths_feed_evidence_to_solving_and_verification(monkeypatch
     async def render(*args):
         return {"total_pages": 1, "preview_paths": []}
 
-    monkeypatch.setattr("solver.deepseek_search", search)
-    monkeypatch.setattr("solver.render_artifacts_async", render)
+    monkeypatch.setattr("qqrobot.solving.solver.web_search", search)
+    monkeypatch.setattr("qqrobot.solving.solver.render_artifacts_async", render)
     config = SimpleNamespace(search=True, search_key="fake", search_endpoint=DEFAULT_ENDPOINT,
                              sympy=False, verify=True, solve_timeout=600, verify_timeout=300)
     store = TaskStore(tmp_path)

@@ -1,6 +1,7 @@
 import asyncio
 from contextlib import closing
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -13,11 +14,11 @@ import pypdfium2 as pdfium
 import pytest
 
 from test_delivery_modes import ReplyContext, context, make_bot
-from task_bot import RAW_EVENTS
+from qqrobot.tasks.task_bot import RAW_EVENTS
 
 
 def test_book_reference_is_global_and_uses_only_specified_pages(tmp_path):
-    from book_library import BookLibrary
+    from qqrobot.solving.book_library import BookLibrary
 
     library = BookLibrary(tmp_path)
     source = tmp_path / "book.pdf"
@@ -35,7 +36,7 @@ def test_book_reference_is_global_and_uses_only_specified_pages(tmp_path):
 
 
 def test_book_can_read_selected_page_of_pdf_above_regular_render_limit(tmp_path):
-    from pdf_tools import PDFError, render_pdf_batch
+    from qqrobot.media.pdf_tools import PDFError, render_pdf_batch
 
     source = tmp_path / "large.pdf"
     make_large_pdf(source, 11)
@@ -71,7 +72,7 @@ def test_collection_stores_each_pdf_selection_separately(tmp_path, monkeypatch):
         assert max_mb == 10
         return SimpleNamespace(data=b"same PDF")
 
-    monkeypatch.setattr("input_cache.download_file", download)
+    monkeypatch.setattr("qqrobot.core.input_cache.download_file", download)
     bot = make_collection_bot(tmp_path)
 
     async def scenario():
@@ -160,8 +161,8 @@ def test_pdf_page_budget_is_checked_before_registration(tmp_path):
 
 
 def test_secondary_pdf_selection_is_required_and_total_budget_is_five():
-    from task_queue import TaskQueue
-    from pdf_tools import PDFError
+    from qqrobot.tasks.task_queue import TaskQueue
+    from qqrobot.media.pdf_tools import PDFError
 
     book = {"book_id": "B0001", "name": "book.pdf", "pdf_selection": "第1-3页"}
     draft = {"url": "https://example.com/draft.pdf", "name": "draft.pdf"}
@@ -177,7 +178,6 @@ def test_secondary_pdf_selection_is_required_and_total_budget_is_five():
     two_draft_pages = {**draft, "pdf_selection": "第4-5页"}
     request = {"parent_id": "Q261116-000001", "attachments": [one_book_page, two_draft_pages]}
     assert TaskQueue._pdf_page_budget(request) == 3
-    assert TaskQueue._estimated_ocr_batches(request) == 2
 
 
 def test_ambiguous_book_attachment_detection(tmp_path):
@@ -212,7 +212,7 @@ def test_check_draft_pdf_requires_an_explicit_page_selection(tmp_path):
     try:
         asyncio.run(bot._dispatch_command(context(), "/查错 我令 t=x", "", [question, draft]))
         assert bot.queue.empty()
-        assert any("明确指定页码" in item[1] for item in bot.media.sent if item[0] == "text")
+        assert any("写明页码" in item[1] for item in bot.media.sent if item[0] == "text")
     finally:
         bot.store.close()
 
@@ -225,7 +225,7 @@ def test_check_rejects_quoted_question_pdf_without_page_selection(tmp_path):
             context(), "/查错 我令 t=x", "引用题面", [question],
             quoted_urls={question["url"]}))
         assert bot.queue.empty()
-        assert any("明确指定页码" in item[1] for item in bot.media.sent if item[0] == "text")
+        assert any("写明页码" in item[1] for item in bot.media.sent if item[0] == "text")
     finally:
         bot.store.close()
 
@@ -299,28 +299,68 @@ def test_check_treats_the_quoted_problem_and_current_draft_as_separate_materials
         bot.store.close()
 
 
-def test_removed_commands_are_excluded_from_help_and_panel():
-    from qq_panel import GROUP_COMMANDS
-    from task_commands import HELP
+def test_book_list_sends_fifteen_titles_per_message(tmp_path):
+    from qqrobot.solving.book_library import BookLibrary
 
-    for command in ("提示", "详解", "文字", "重排", "原解", "会了", "再练"):
+    bot = make_bot(tmp_path)
+    library = BookLibrary(tmp_path)
+    source = tmp_path / "book.pdf"
+    with pdfium.PdfDocument.new() as pdf:
+        pdf.new_page(100, 100).close()
+        pdf.save(source)
+    titles = ["数学分析", "高等代数", "常微分方程", "实变函数论与泛函分析初步",
+              *[f"书{index}" for index in range(5, 21)]]
+    for title in titles:
+        with library.staged_pdf() as staged:
+            shutil.copyfile(source, staged)
+            library.add(staged, title, "简介不应出现在列表里")
+    calls = []
+
+    async def send_command_choices(kind, target, text, choices, msg_id=None, msg_seq=None,
+                                   per_row=1):
+        calls.append((text, choices, per_row))
+
+    bot.media.send_command_choices = send_command_choices
+    try:
+        ctx = ReplyContext("group", "g", "group:g:alice", "book-list", time.time())
+        asyncio.run(bot._dispatch_command(ctx, "/书库", "", []))
+        assert len(calls) == 2
+        first, second = calls
+        assert first[2] == second[2] == 3
+        assert first[0].splitlines()[0] == '<qqbot-at-user id="alice" />'
+        assert first[0].splitlines()[1:4] == ["1.《数学分析》", "2.《高等代数》", "3.《常微分方程》"]
+        assert len(first[1]) == 15 and len(second[1]) == 5
+        assert second[0].splitlines()[1] == "16.《书16》"
+        assert [command for _, command in second[1]][0] == "/引用 B0016"
+        assert "B0001" not in first[0] and " 1 页" not in first[0] and "简介不应出现" not in first[0]
+        assert first[1][3][0] == "4.《实变函数论与泛函分析…》"
+    finally:
+        bot.store.close()
+
+
+def test_removed_commands_are_excluded_from_help_and_panel():
+    from qqrobot.panel import GROUP_COMMANDS
+    from qqrobot.tasks.task_commands import HELP
+
+    for command in ("提示", "详解", "文字", "重排", "原解", "会了", "再练", "开始"):
         assert f"/{command}" not in HELP
         assert f"/{command}" not in dict(GROUP_COMMANDS)
 
 
-def test_age_cleanup_deletes_rows_and_files_keeps_favorites(tmp_path):
+def test_age_cleanup_deletes_rows_and_files(tmp_path):
     bot = make_bot(tmp_path)
     try:
-        tasks = [bot.store.create("u", message, "c2c", "u", {})[0]["task_id"] for message in ("drop", "keep")]
-        for tid in tasks:
+        dropped, kept = [bot.store.create("u", message, "c2c", "u", {})[0]["task_id"]
+                         for message in ("drop", "keep")]
+        for tid in (dropped, kept):
             (bot.store.task_dir(tid) / "notes.txt").write_text("answer")
             bot.store.update(tid, state="completed")
-        bot.store.save_favorite(tasks[1], "u", "stem", "answer")
         with bot.store.db:
-            bot.store.db.execute("UPDATE tasks SET created=?", (time.time() - 8 * 86400,))
+            bot.store.db.execute("UPDATE tasks SET created=? WHERE task_id=?",
+                                 (time.time() - 8 * 86400, dropped))
         bot.store.cleanup()
-        assert bot.store.get(tasks[0]) is None and not (bot.store.results / tasks[0]).exists()
-        assert bot.store.get(tasks[1]) and (bot.store.results / tasks[1] / "notes.txt").is_file()
+        assert bot.store.get(dropped) is None and not (bot.store.results / dropped).exists()
+        assert bot.store.get(kept) and (bot.store.results / kept / "notes.txt").is_file()
     finally:
         bot.store.close()
 
@@ -340,7 +380,7 @@ def test_scheduled_cleanup_runs_without_incoming_messages(tmp_path, monkeypatch)
         if len(intervals) == 2:
             raise asyncio.CancelledError
 
-    monkeypatch.setattr("task_bot.asyncio.sleep", tick)
+    monkeypatch.setattr("qqrobot.tasks.task_bot.asyncio.sleep", tick)
     try:
         with pytest.raises(asyncio.CancelledError):
             asyncio.run(bot._cleanup_periodically())
@@ -351,16 +391,17 @@ def test_scheduled_cleanup_runs_without_incoming_messages(tmp_path, monkeypatch)
 
 
 def test_managing_book_from_cloud_cli_uses_same_catalog(tmp_path):
-    from book_library import BookLibrary
-    from pdf_tools import render_pdf_batch
+    from qqrobot.solving.book_library import BookLibrary
+    from qqrobot.media.pdf_tools import render_pdf_batch
 
     source = tmp_path / "book.pdf"
     make_large_pdf(source, 11)
-    script = Path(__file__).resolve().parents[1] / "book_library.py"
-    cli = [sys.executable, str(script), "--data-dir", str(tmp_path)]
+    project = Path(__file__).resolve().parents[1]
+    cli = [sys.executable, "-m", "qqrobot.solving.book_library", "--data-dir", str(tmp_path)]
 
     def run(*args):
-        return subprocess.run([*cli, *args], capture_output=True, encoding="utf-8", check=True).stdout
+        return subprocess.run([*cli, *args], cwd=project, capture_output=True,
+                              encoding="utf-8", check=True).stdout
 
     assert "B0001" in run("add", str(source), "Real Analysis", "--summary", "Limits")
     assert "Real Analysis" in run("list")
@@ -373,9 +414,9 @@ def test_managing_book_from_cloud_cli_uses_same_catalog(tmp_path):
 
 
 def test_book_rejects_pdf_above_the_configured_size_limit(tmp_path, monkeypatch):
-    import book_library
-    from book_library import BookLibrary
-    from pdf_tools import PDFError
+    from qqrobot.solving import book_library
+    from qqrobot.solving.book_library import BookLibrary
+    from qqrobot.media.pdf_tools import PDFError
 
     source = tmp_path / "oversized.pdf"
     make_large_pdf(source, 2)
@@ -389,9 +430,9 @@ def test_book_rejects_pdf_above_the_configured_size_limit(tmp_path, monkeypatch)
 
 
 def test_book_rejects_library_above_the_configured_quota(tmp_path, monkeypatch):
-    import book_library
-    from book_library import BookLibrary
-    from pdf_tools import PDFError
+    from qqrobot.solving import book_library
+    from qqrobot.solving.book_library import BookLibrary
+    from qqrobot.media.pdf_tools import PDFError
 
     source = tmp_path / "book.pdf"
     make_large_pdf(source, 2)
@@ -417,9 +458,10 @@ def test_invalid_model_tex_still_creates_readable_pdf(tmp_path):
         "steps": [{"text": "Derive the estimate", "math": r"x^{1+2"}],
         "answer_latex": "Result 42",
     }}), encoding="utf-8")
-    worker = Path(__file__).resolve().parents[1] / "render_worker.py"
-    result = subprocess.run([sys.executable, str(worker), request.name], cwd=tmp_path,
-                            capture_output=True, encoding="utf-8", timeout=40)
+    project = Path(__file__).resolve().parents[1]
+    environment = {**os.environ, "PYTHONPATH": str(project)}
+    result = subprocess.run([sys.executable, "-m", "qqrobot.rendering.render_worker", request.name],
+                            cwd=tmp_path, env=environment, capture_output=True, encoding="utf-8", timeout=40)
     assert result.returncode == 0, result.stderr
     metadata = json.loads(result.stdout)
     assert metadata["plot_warnings"]
@@ -429,8 +471,8 @@ def test_invalid_model_tex_still_creates_readable_pdf(tmp_path):
 
 
 def test_admin_private_book_import_can_be_referenced_in_any_group(tmp_path, monkeypatch):
-    from book_library import BookLibrary
-    from solver import Solver
+    from qqrobot.solving.book_library import BookLibrary
+    from qqrobot.solving.solver import Solver
 
     source = tmp_path / "book.pdf"
     with pdfium.PdfDocument.new() as pdf:
@@ -451,7 +493,7 @@ def test_admin_private_book_import_can_be_referenced_in_any_group(tmp_path, monk
         with source.open("rb") as file:
             shutil.copyfileobj(file, output)
 
-    monkeypatch.setattr("task_commands.download_file", download)
+    monkeypatch.setattr("qqrobot.tasks.task_commands.download_file", download)
 
     async def transcribe(images, text, **options):
         assert len(images) == 1
@@ -477,7 +519,7 @@ def test_admin_private_book_import_can_be_referenced_in_any_group(tmp_path, monk
                 ("h", "/查错 B0001 第1页 我令 t=x", "question_attachments")):
             chat = ReplyContext("group", gid, f"group:{gid}:reader", "read", time.time())
             await bot._dispatch_command(chat, "/引用", "", [])
-            assert "B0001" in bot.media.sent[-1][1] and "极限" in bot.media.sent[-1][1]
+            assert "1.《数学分析》" in bot.media.sent[-1][1]
             await bot._dispatch_command(chat, command, "", [])
             job = bot.store.get(bot.queue.get_nowait())
             assert job["owner"] == chat.owner
@@ -512,7 +554,7 @@ def test_admin_private_book_import_can_be_referenced_in_any_group(tmp_path, monk
             if len(intervals) > 1:
                 raise asyncio.CancelledError
 
-        monkeypatch.setattr("task_bot.asyncio.sleep", sleep)
+        monkeypatch.setattr("qqrobot.tasks.task_bot.asyncio.sleep", sleep)
         with pytest.raises(asyncio.CancelledError):
             await bot._cleanup_periodically()
         assert not saved_pdf.exists()
@@ -521,47 +563,6 @@ def test_admin_private_book_import_can_be_referenced_in_any_group(tmp_path, monk
         asyncio.run(scenario())
     finally:
         bot.store.close()
-
-
-@pytest.mark.skipif(not shutil.which("xelatex"), reason="XeLaTeX unavailable")
-def test_favorite_selector_and_pdf_use_saved_order_and_owner(tmp_path):
-    bot = make_bot(tmp_path)
-    captured = []
-
-    async def upload(kind, target, path):
-        with pdfium.PdfDocument(path) as document:
-            pages = []
-            for index in range(len(document)):
-                with closing(document[index]) as page, closing(page.get_textpage()) as text:
-                    pages.append(text.get_text_range())
-        captured.append((path.name, "\n".join(pages)))
-        return path.name
-
-    bot.media.upload_file_path = upload
-    first, second = "Q261115-000009", "Q261115-000001"
-    bot.store.save_favorite(first, "u", "First question", "First answer", "First mistake")
-    bot.store.save_favorite(second, "u", "Second question", "Second answer")
-    bot.store.save_favorite("Q261115-000003", "other", "Other question", "Private answer")
-
-    async def scenario():
-        await bot._dispatch_command(context(), "/复习", "", [])
-        chooser = bot.media.sent[-1][1]
-        assert chooser.index(first) < chooser.index(second)
-        assert "First answer" not in chooser
-        await bot._dispatch_command(context(), f"/复习 {first}", "", [])
-        await bot._dispatch_command(context(), "/错题本", "", [])
-
-    try:
-        asyncio.run(scenario())
-        (review_name, review), (export_name, export) = captured
-        assert review_name.endswith(first + ".pdf") and export_name == "错题本.pdf"
-        assert all(part in review for part in ("First question", "First answer", "First mistake"))
-        assert export.index("First answer") < export.index("Second answer")
-        assert "Private answer" not in export
-    finally:
-        bot.store.close()
-
-
 def test_cancelled_job_waiting_for_resource_lock_does_not_start(tmp_path):
     instance = make_bot(tmp_path)
 

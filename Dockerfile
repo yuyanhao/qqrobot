@@ -1,7 +1,7 @@
 FROM python:3.12-slim-bookworm
 
 LABEL org.opencontainers.image.title="qqrobot" \
-      org.opencontainers.image.description="QQ official bot with DeepSeek math/physics solving" \
+      org.opencontainers.image.description="QQ official bot with pluggable OpenAI-compatible model providers" \
       org.opencontainers.image.source="https://github.com/yuyanhao/qqrobot" \
       org.opencontainers.image.licenses="MIT"
 
@@ -16,7 +16,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && mkdir /app/data && chown qqbot:qqbot /app/data
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY *.py ./
+COPY qqrobot/ ./qqrobot/
 COPY skills/ ./skills/
+COPY VERSION ./VERSION
 USER qqbot
-CMD ["python", "task_bot.py"]
+CMD ["python", "-m", "qqrobot"]

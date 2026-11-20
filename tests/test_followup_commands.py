@@ -4,9 +4,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from solver import Solver
-from task_bot import TaskBot
-from task_store import TaskStore
+from qqrobot.solving.solver import Solver
+from qqrobot.tasks.task_bot import TaskBot
+from qqrobot.tasks.task_store import TaskStore
 
 
 @pytest.mark.parametrize("prefix", ["/", "／", "/ ", "／ ", ""])

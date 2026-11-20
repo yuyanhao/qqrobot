@@ -2,8 +2,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
-import file_tools
-
+from qqrobot.media import file_tools
 
 def test_large_download_writes_each_chunk_to_file_as_it_arrives(tmp_path, monkeypatch):
     async def public_url(url):
