@@ -1,5 +1,5 @@
 qq-botpy==1.2.1
-openai==2.54.0
+openai==3.52.0
 python-dotenv==1.2.4
 pillow==13.0.0
 pypdfium2==5.14.0
