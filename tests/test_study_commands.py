@@ -71,7 +71,7 @@ def photo(monkeypatch):
     return [{"url": "https://example.com/input.png", "content_type": "image/png"}]
 
 
-def test_study_and_favorites_include_the_question_from_an_existing_followup(tmp_path):
+def test_study_uses_the_question_from_an_existing_followup(tmp_path):
     followup = "为什么还要保留负根？"
     prompts = []
 
@@ -91,36 +91,6 @@ def test_study_and_favorites_include_the_question_from_an_existing_followup(tmp_
             store.update(tid, state="completed", problem=PROBLEM, result={"solution": solution()})
             assert "把负根代回去试试。" in await session.send(f"/查错 {tid} 代入方程检查")
             assert followup in prompts[-1]
-            assert "已收藏" in await session.send(f"/收藏 {tid}")
-            assert followup in store.get_favorite(tid, OWNER)["problem"]
-        finally:
-            session.bot.store.close()
-
-    asyncio.run(check())
-
-
-def test_favoriting_a_question_while_solving_keeps_the_eventual_answer(tmp_path, monkeypatch):
-    async def chat(messages, *args):
-        if "规划器" in messages[0]["content"]:
-            return '{"accepted": true, "domain": "math", "needs_search": false, "search_query": ""}'
-        return json.dumps(solution(), ensure_ascii=False)
-
-    async def render(*args):
-        return {}
-
-    monkeypatch.setattr("solver.render_artifacts_async", render)
-
-    async def check():
-        session = StudyChat(tmp_path, chat)
-        try:
-            store = session.bot.store
-            task, _ = store.create(OWNER, "original", "group", "g", {"text": PROBLEM})
-            tid = task["task_id"]
-            store.update(tid, state="solving")
-            assert "已收藏" in await session.send(f"/收藏 {tid}")
-            await session.bot.solver.run(store.get(tid, OWNER))
-            store.cleanup(ttl_days=-1)
-            assert ANSWER in store.get_favorite(tid, OWNER)["answer"] and store.get(tid)
         finally:
             session.bot.store.close()
 

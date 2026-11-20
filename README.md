@@ -4,7 +4,7 @@
 ![Release](https://img.shields.io/github/v/release/yuyanhao/qqrobot)
 ![License](https://img.shields.io/github/license/yuyanhao/qqrobot)
 
-当前代码版本：**v1.0.3**。变更内容见 [CHANGELOG.md](CHANGELOG.md)。
+当前代码版本：**v1.0.4**。变更内容见 [CHANGELOG.md](CHANGELOG.md)。
 
 `VERSION` 保存版本号；主分支更新此文件时，发布流程会创建对应 Git 标签和 GitHub Release。
 
@@ -97,12 +97,12 @@ docker compose logs --tail=100
 
 群聊每条操作都需 @ 机器人，私聊可直接发送。带题号的操作用原账号在原会话发送。
 
-- 直接发数学或物理题的文字、图。群聊可 @ 机器人并附 PDF，私聊先发 PDF，再引用文件消息并写明要求。普通 PDF 每份最多 10 MB；所有要读取的 PDF，包括题面、草稿、追问和附加材料，都必须写明页码，每份 PDF 和单任务累计最多 5 页。未写页码不会读取。多条提交材料先用「/收集」，再用「/补图 收集题号」追加，发「/解题 收集题号」解题（旧写法「/开始 收集题号」仍可用）。
+- 直接发数学或物理题的文字、图。群聊可 @ 机器人并附 PDF，私聊先发 PDF，再引用文件消息并写明要求。普通 PDF 每份最多 10 MB；所有要读取的 PDF，包括题面、草稿、追问和附加材料，都必须写明页码，每份 PDF 和单任务累计最多 5 页。未写页码不会读取。多条提交材料先用「/收集」，再用「/补图 收集题号」追加，最后发「/解题 收集题号」开始解题。
 - 查错推荐先把题目和草稿用「/收集」收进同一题号，再发「/查错 收集题号」；自动识别题目和草稿，不准时用「/查错 收集题号 1题 2-4稿」指定。也可用「/查错 题号」在同一条消息附草稿，或用「/查错 同页」发一张题目和作答同页的图。PDF 页码须在收集或同条命令中指定，每份 PDF 和每个任务最多 5 页。查错会指出第一处错误、说明原因并给出更正结论。
 - 直接发题号或「/结果 题号」查询并领取，排版后 1–3 页发全部图片，超过 3 页发 PDF。若只有文字稿，会发回第一段，再按提示用「/结果 题号 第2段」继续领取。用「/PDF 题号」可指定领取完整 PDF。
 - 「/书库」查看共享 PDF，编号按当前在库顺序连续排列；移除一本后，后续书籍编号自动顺延。「/引用 B0001 第3-5页」读取指定书页。所有附加 PDF 也须明确指定页码，且整项任务累计最多 5 页。管理员书库单份 PDF 默认限 100 MB、书库总量默认限 1 GB（`BOOK_MAX_PDF_MB` / `BOOK_LIBRARY_MAX_MB`）；暂存 15 分钟后过期。
-- 「/收藏 题号」永久保存，解答完成后补入。「/复习」选题，「/复习 题号」领取题目和答案，「/错题本」导出本会话全部收藏。普通结果默认保留 7 天。
-- 手机 QQ 群的原生面板可用 python qq_panel.py 预览，部署后用 python qq_panel.py --apply 同步。「/最近」只发两行两列的题号按钮，不输出文字（按钮不可用时退回题号列表）。
+- 结果默认保留 7 天，期间随时用题号领取。
+- 手机 QQ 群的原生面板可用 python qq_panel.py 预览，部署后用 python qq_panel.py --apply 同步。「/最近」群聊首行 @ 你，下面只有两行两列题号按钮，不输出文字（按钮不可用时退回题号列表）。
 
 [完整指令、书库管理员配置和面板同步方式](docs/qq-command-guide.md)
 
@@ -168,45 +168,45 @@ python -m pytest -q
 
 ## 更新
 
-先等待当前任务完成，停止旧、新 systemd 服务并备份实际 `.env`、代码和数据目录。停止服务可确保 SQLite WAL 与附件一起保持一致。正式发布标签为 v1.0.3。
+先等待当前任务完成，停止旧、新 systemd 服务并备份实际 `.env`、代码和数据目录。停止服务可确保 SQLite WAL 与附件一起保持一致。正式发布标签为 v1.0.4。
 
 ```bash
 cd /opt/qq-math-bot
 sudo systemctl stop qqbot || true
 sudo systemctl stop qq-math-bot || true
 stamp=$(date +%Y%m%d-%H%M%S)
-sudo tar -czf "/root/qq-math-bot-before-v1.0.3-$stamp.tar.gz" -C /opt/qq-math-bot .env data
-sudo tar -czf "/root/qq-math-bot-code-before-v1.0.3-$stamp.tar.gz" -C /opt/qq-math-bot --exclude=data --exclude=.env .
+sudo tar -czf "/root/qq-math-bot-before-v1.0.4-$stamp.tar.gz" -C /opt/qq-math-bot .env data
+sudo tar -czf "/root/qq-math-bot-code-before-v1.0.4-$stamp.tar.gz" -C /opt/qq-math-bot --exclude=data --exclude=.env .
 cd /tmp
-curl -fL https://github.com/yuyanhao/qqrobot/archive/refs/tags/v1.0.3.tar.gz -o qqrobot-v1.0.3.tar.gz
-rm -rf qqrobot-v1.0.3
-mkdir -p qqrobot-v1.0.3
-tar -xzf qqrobot-v1.0.3.tar.gz --strip-components=1 -C qqrobot-v1.0.3
-cd qqrobot-v1.0.3
+curl -fL https://github.com/yuyanhao/qqrobot/archive/refs/tags/v1.0.4.tar.gz -o qqrobot-v1.0.4.tar.gz
+rm -rf qqrobot-v1.0.4
+mkdir -p qqrobot-v1.0.4
+tar -xzf qqrobot-v1.0.4.tar.gz --strip-components=1 -C qqrobot-v1.0.4
+cd qqrobot-v1.0.4
 sudo bash setup.sh
 sudo -u qqbot /opt/qq-math-bot/.venv/bin/python /opt/qq-math-bot/qq_panel.py --apply
 ```
 
-安装脚本只在 `/opt/qq-math-bot/.env` 不存在时才复制模板，已有 `.env`、题目数据库、附件、收藏和书库文件不会被覆盖。不要用 `.env.example` 覆盖 `.env`，也不要执行 `git clean -fdx`。脚本要求先停止名为 `qqbot` 的旧服务。首次更新后检查 `sudo systemctl status qq-math-bot` 和 `sudo journalctl -u qq-math-bot -n 100 --no-pager`，并在 QQ 私聊或群里发送 `/帮助`。若当前服务器用 Docker，按下方 Docker 步骤更新。
+安装脚本只在 `/opt/qq-math-bot/.env` 不存在时才复制模板，已有 `.env`、题目数据库、附件和书库文件不会被覆盖。不要用 `.env.example` 覆盖 `.env`，也不要执行 `git clean -fdx`。脚本要求先停止名为 `qqbot` 的旧服务。首次更新后检查 `sudo systemctl status qq-math-bot` 和 `sudo journalctl -u qq-math-bot -n 100 --no-pager`，并在 QQ 私聊或群里发送 `/帮助`。若当前服务器用 Docker，按下方 Docker 步骤更新。
 
 Docker 更新在现有 Compose 项目目录执行；`.env` 由 Compose 的 `env_file` 读取，更新时保持不变：
 
 ```bash
 cd /path/to/qqrobot
-cp .env "/root/qqbot-env-before-v1.0.3-$(date +%Y%m%d-%H%M%S)"
+cp .env "/root/qqbot-env-before-v1.0.4-$(date +%Y%m%d-%H%M%S)"
 docker compose stop
 volume="$(docker volume ls -q --filter label=com.docker.compose.volume=qqbot-data | head -n 1)"
 test -n "$volume"
-backup="qqbot-data-before-v1.0.3-$(date +%Y%m%d-%H%M%S).tar.gz"
+backup="qqbot-data-before-v1.0.4-$(date +%Y%m%d-%H%M%S).tar.gz"
 docker run --rm -v "$volume:/data:ro" -v "$PWD:/backup" alpine:3.22 \
   tar -czf "/backup/$backup" -C /data .
 git fetch --tags
-git checkout v1.0.3
+git checkout v1.0.4
 docker compose up -d --build
 docker compose exec qqbot python qq_panel.py --apply
 ```
 
-不要执行 `docker compose down -v`，它会删除数据卷。发布页为 `https://github.com/yuyanhao/qqrobot/releases/tag/v1.0.3`，源码归档地址为 `https://github.com/yuyanhao/qqrobot/archive/refs/tags/v1.0.3.tar.gz`；使用 Git 仓库目录部署时，正式发布后可执行 `git checkout v1.0.3`。
+不要执行 `docker compose down -v`，它会删除数据卷。发布页为 `https://github.com/yuyanhao/qqrobot/releases/tag/v1.0.4`，源码归档地址为 `https://github.com/yuyanhao/qqrobot/archive/refs/tags/v1.0.4.tar.gz`；使用 Git 仓库目录部署时，正式发布后可执行 `git checkout v1.0.4`。
 
 `update_delivery.sh` 和 `update_pdf_input.sh` 已停用，避免旧代码覆盖当前版本的安全限制。`update_search.sh` 仅用于旧版搜索迁移；新部署请使用完整安装包和 `setup.sh`。`repair_pdf.sh` 只重排已保存的解答，不处理输入 PDF。
 
@@ -219,7 +219,7 @@ docker compose exec qqbot python qq_panel.py --apply
 | 服务启动失败 | 检查安装目录的 `.env`，查看 systemd 或 Compose 日志 |
 | 模型鉴权、限流或网络错误 | 检查密钥、余额、模型权限和接口连通性 |
 | 任务超时或输出截断 | 按小问拆分，减少 PDF 页码 |
-| 有结果但没自动收到 | 在原会话发送题号、`/PDF` 或 `/图片`，检查 QQ 回复权限 |
+| 有结果但没自动收到 | 在原会话发送题号或 `/PDF`，检查 QQ 回复权限 |
 | PDF 排版失败 | 检查 XeLaTeX 与中文字体，查看题目目录中的 `render-error.txt` 和保留的 TeX 日志 |
 | 服务重启或退出 | 查看服务退出码、内存占用及系统 OOM 日志 |
 
@@ -230,7 +230,7 @@ docker compose exec qqbot python qq_panel.py --apply
 ```text
 qqrobot/
 ├── task_bot.py           # QQ 事件接入与服务启停
-├── task_commands.py      # 指令解析、学习与收藏操作
+├── task_commands.py      # 指令解析与学习操作
 ├── task_queue.py         # 材料收集、提交、取消与解题队列
 ├── task_delivery.py      # 回复时限、结果领取与 PDF 重排
 ├── bot.py                # 兼容入口
@@ -261,6 +261,6 @@ qqrobot/
 
 解答由模型生成，复核状态会单独标明；生成完成不代表数学结论已经得到人工确认。绘图仅支持限定类型，不能代替证明或任意物理仿真。
 
-题目、附件及相关上下文会发送给模型服务，按需搜索的关键词会发送给搜索接口。服务器保存题目、附件和解答，默认自提交起保留七天，管理员可访问。主动收藏的题干、文字解答和错因保存在同一个 SQLite 数据库中，保留到取消收藏。收藏按用户和会话查询，群聊中发出的回复仍对群成员可见。请按自己的使用场景设置白名单、保存期限与数据备份。
+题目、附件及相关上下文会发送给模型服务，按需搜索的关键词会发送给搜索接口。服务器保存题目、附件和解答，默认自提交起保留七天，管理员可访问。群聊中发出的回复仍对群成员可见。请按自己的使用场景设置白名单、保存期限与数据备份。
 
 本项目包含离线回归测试；Linux/systemd、Docker、真实模型调用、QQ 消息权限以及小内存服务器负载仍需在实际部署环境验收。

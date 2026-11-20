@@ -4,12 +4,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 import logging
 from pathlib import Path
-from tempfile import TemporaryDirectory
 import time
 
 from qqmedia import QQMediaError
-from render_service import RenderError, render_favorites_async, render_preview_async
-from solver import study_problem
+from render_service import render_preview_async
 from task_store import describe, short_verification
 
 log = logging.getLogger("qq-math")
@@ -34,6 +32,14 @@ def _split_text_reply(text, max_parts):
         marker = "\n… 本次未完整发送，请缩短请求或分批提交材料。"
         parts[-1] = parts[-1][:TEXT_REPLY_LIMIT - len(marker)] + marker
     return parts or [""], truncated
+
+
+def mention_tag(context):
+    """Markdown @ tag for the asking member; group chats render it, C2C does not."""
+    if getattr(context, "kind", "") != "group":
+        return ""
+    member = str(getattr(context, "owner", "")).rsplit(":", 1)[-1]
+    return f'<qqbot-at-user id="{member}" />' if member else ""
 
 
 @dataclass
@@ -83,7 +89,13 @@ class TaskDelivery:
                 return False
         return True
 
-    async def _command_choices(self, context, text, choices, *, per_row=1, fallback=None):
+    async def _command_choices(self, context, text, choices, *, per_row=1, fallback=None,
+                               inline_mention=False):
+        plain = text
+        mention = mention_tag(context)
+        if mention:
+            text = mention if text == "\u200b" else (f"{mention} {text}" if inline_mention
+                                                      else f"{mention}\n{text}")
         send_choices = getattr(self.media, "send_command_choices", None)
         if send_choices:
             async def layout(kind, target, content, buttons, msg_id=None, msg_seq=None):
@@ -95,43 +107,7 @@ class TaskDelivery:
             except QQMediaError as exc:
                 log.info("command_buttons_unavailable category=%s status=%s code=%s",
                          exc.category, exc.status, exc.code)
-        await self._text(context, fallback or text)
-
-    async def _send_favorite_pdf(self, context, favorites, title):
-        entries = []
-        for favorite in favorites:
-            tid = favorite["task_id"]
-            task = self.store.get(tid, context.owner)
-            solution = task["result"].get("solution") if task and task["state"] == "completed" else None
-            if (not favorite["answer"] or (solution and
-                    study_problem(task["problem"], task["request"]) != favorite["problem"])):
-                solution = None
-            doc = dict(solution or {"answer_latex": favorite["answer"] or "答案尚未生成。"})
-            doc.update(title=tid, problem_latex=favorite["problem"] or "题干尚未读取完成。")
-            notes = ["错因：" + favorite["note"]] if favorite["note"] else []
-            if favorite["question_ocr"].get("needs_confirmation"):
-                notes.append("题干有识图疑点，发 /题干 核对。")
-                notes.extend(favorite["question_ocr"].get("notes", []))
-            if notes:
-                doc["check_latex"] = "\n\n".join([*notes, doc.get("check_latex", "")]).rstrip()
-            entries.append({"doc": doc, "plain": solution is None})
-
-        if self.resource_lock.locked():
-            await self._text(context, "正在处理题目，稍后再试。")
-            return
-        try:
-            with TemporaryDirectory(prefix="favorites-", dir=self.store.root) as directory:
-                async with self.resource_lock:
-                    result = await render_favorites_async(title, entries, Path(directory))
-                path = Path(directory) / f"{title}.pdf"
-                Path(result["pdf_path"]).replace(path)
-                info = await self.media.upload_file_path(context.kind, context.target, path)
-                await self._send(context, self.media.send_file, info)
-                if result["warnings"] and context.passive_available():
-                    await self._text(context, "\n".join(result["warnings"]))
-        except (RenderError, OSError, QQMediaError) as exc:
-            log.warning("favorite_export_failed type=%s", type(exc).__name__)
-            await self._text(context, "导出失败，请稍后重试。")
+        await self._text(context, fallback or plain)
 
     async def _deliver(self, task, context, mode="结果", page=1):
         result = task["result"]
@@ -146,7 +122,7 @@ class TaskDelivery:
 
     async def _deliver_study(self, task, context, mode, page):
         tid, result = task["task_id"], task["result"]
-        if mode in ("图片", "PDF", "文字稿"):
+        if mode in ("PDF", "文字稿"):
             await self._text(context, f"{tid} 是学习反馈，发 {tid} 领取。")
             return
         action = task["request"]["action"]
@@ -159,7 +135,8 @@ class TaskDelivery:
         delivered = await self._text(context, reply)
         self.store.update(tid, delivery="delivered" if delivered else "awaiting_query")
 
-    async def _deliver_saved_text(self, task, context, page):
+    async def _deliver_saved_text(self, task, context, page=None):
+        """page=None sends the whole draft; an explicit page sends one segment."""
         tid, result = task["task_id"], task["result"]
         path = Path(result["text_path"]) if result.get("text_path") else None
         try:
@@ -173,14 +150,28 @@ class TaskDelivery:
 
         size = 1400
         total = (len(body) + size - 1) // size
-        if not 1 <= page <= total:
-            await self._text(context, f"{tid} 文字稿共 {total} 段，没有第 {page} 段。")
-            return True
+        if page is None:
+            numbers = list(range(1, total + 1))
+        else:
+            if not 1 <= page <= total:
+                await self._text(context, f"{tid} 文字稿共 {total} 段，没有第 {page} 段。")
+                return True
+            numbers = [page]
         status = short_verification(result.get("verification")) or "未复核"
-        reply = f"{tid} · 文字稿 {page}/{total} · {status}\n\n{body[(page - 1) * size:page * size]}"
-        if page < total:
-            reply += f"\n\n下一段：/结果 {tid} 第{page + 1}段"
-        delivered = await self._text(context, reply)
+        delivered, sent = True, 0
+        for index, number in enumerate(numbers):
+            header = (f"{tid} · 文字稿 {number}/{total} · {status}" if total > 1
+                      else f"{tid} · 文字稿 · {status}")
+            reply = header + "\n\n" + body[(number - 1) * size:number * size]
+            if page is not None and number < total:
+                reply += f"\n\n下一段：/结果 {tid} 第{number + 1}段"
+            if not await self._text(context, reply):
+                delivered = False
+                break
+            sent = index + 1
+        remaining = numbers[sent:] if page is None and not delivered else []
+        if remaining:
+            await self._text(context, f"还有 {len(remaining)} 段：/结果 {tid} 第{remaining[0]}段")
         self.store.update(tid, delivery="delivered" if delivered else "awaiting_query")
         return True
 
@@ -196,7 +187,7 @@ class TaskDelivery:
                 return
             path = Path(result["pdf_path"]) if result.get("pdf_path") else None
             if not path or not path.is_file():
-                if mode == "结果" and await self._deliver_saved_text(task, context, 1):
+                if mode == "结果" and await self._deliver_saved_text(task, context):
                     return
                 self.store.update(tid, delivery="awaiting_query")
                 reply = describe(task) + ("\n" + result["notes"] if result.get("notes") else "")
@@ -219,15 +210,16 @@ class TaskDelivery:
                 self.store.update(tid, result=result)
                 total = result["total_pages"]
 
-            image_mode = mode == "图片" or (mode == "结果" and total <= 3)
+            image_mode = mode == "结果" and total <= 3
             existing = []
-            status = describe(task) + ("\n" + result["notes"] if result.get("notes") else "")
+            if result.get("notes"):
+                log.info("result_notes task=%s notes=%s", tid, result["notes"][:200])
             if image_mode:
                 if mode == "结果": page = 1
                 if not 1 <= page <= total:
                     await self._text(context, f"{total} 页，没有第 {page} 页。")
                     return
-                count = 2 if mode == "图片" else total
+                count = total
                 numbers = list(range(page, min(page + count, total + 1)))
                 existing = [self.store.task_dir(tid) / f"preview-{number:03d}.png" for number in numbers]
                 if not all(p.is_file() for p in existing):
@@ -240,9 +232,6 @@ class TaskDelivery:
                     existing = [Path(p) for p in batch["preview_paths"]]
                     if len(existing) != len(numbers):
                         raise QQMediaError("预览不完整，请重试")
-                status += f"\n第 {numbers[0]}–{numbers[-1]} 页"
-                if numbers[-1] < total:
-                    status += f"\n后续：/图片 {tid} {numbers[-1] + 1}"
 
             required = len(existing) if image_mode else 1
             room = context.reply_limit - context.seq if context.passive_available() else 0
@@ -250,14 +239,7 @@ class TaskDelivery:
                 self.store.update(tid, delivery="awaiting_query")
                 await self._text(context, f"{tid} 已保存，发 {tid} 取回。")
                 return
-            # An automatic three-page C2C answer has exactly three slots left
-            # after its acknowledgement. Verification remains in the page images.
-            # The status must not consume slots reserved for result images/files.
-            if self.settings.active_delivery or room >= required + 1:
-                if not await self._text(context, status, max_parts=1):
-                    self.store.update(tid, delivery="awaiting_query")
-                    return
-
+            # The answer files are the reply: no status line before them.
             if image_mode:
                 for path in existing:
                     info = await self.media.upload_image(context.kind, context.target, path.read_bytes(), path.name)

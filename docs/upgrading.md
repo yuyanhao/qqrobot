@@ -1,5 +1,20 @@
 # 升级指南
 
+## 从 v1.0.3 升级到 v1.0.4
+
+只改代码和面板，不动 `.env` 结构（时间预算若还没调，顺手同步）：
+
+```bash
+sudo systemctl stop qq-math-bot
+stamp=$(date +%Y%m%d-%H%M%S)
+sudo tar -czf "/root/qq-math-bot-before-v1.0.4-$stamp.tar.gz" -C /opt/qq-math-bot .env data
+cd /tmp
+curl -fsSL https://github.com/yuyanhao/qqrobot/archive/refs/tags/v1.0.4.tar.gz | sudo tar -xzf - -C /opt/qq-math-bot --strip-components=1
+sudo systemctl start qq-math-bot
+sudo -u qqbot /opt/qq-math-bot/.venv/bin/python /opt/qq-math-bot/qq_panel.py --apply
+grep -x 1.0.4 /opt/qq-math-bot/VERSION
+```
+
 ## 从 v1.0.2 升级到 v1.0.3
 
 只改 `/最近` 的发送方式，不动 `.env`、数据库和面板：

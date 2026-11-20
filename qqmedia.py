@@ -14,6 +14,8 @@ import aiohttp
 from file_tools import PublicResolver, _check_public_url
 from settings import flag
 
+QQ_KEYBOARD_ROWS = 5
+
 
 def qq_api_base_url(value=None):
     """Use one HTTPS origin for SDK routes and media requests."""
@@ -188,8 +190,12 @@ class QQMedia:
                 "enter": False, "reply": False, "unsupport_tips": "请复制消息中的指令。",
             },
         } for index, (label, command) in enumerate(choices, 1)]
+        if not buttons:
+            raise QQMediaError("没有可发送的按钮", "protocol")
         rows = [{"buttons": buttons[start:start + per_row]}
                 for start in range(0, len(buttons), per_row)]
+        if len(rows) > QQ_KEYBOARD_ROWS:
+            raise QQMediaError(f"按钮行数 {len(rows)} 超过 QQ 上限 {QQ_KEYBOARD_ROWS} 行", "protocol")
         payload = {"msg_type": 2, "markdown": {"content": text},
                    "keyboard": {"content": {"rows": rows}}}
         await self._send_payload(kind, target, payload, msg_id, msg_seq)

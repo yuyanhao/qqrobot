@@ -77,14 +77,12 @@ def test_picker_falls_back_to_copyable_commands_on_qq_permission_error(tmp_path)
         bot.store.close()
 
 
-def test_check_picker_skips_unread_and_unconfirmed_questions_and_shows_submission_time(
-        tmp_path, monkeypatch):
+def test_check_picker_skips_unread_questions_and_shows_submission_time(tmp_path, monkeypatch):
     now = datetime(2026, 1, 2, 7, 42, tzinfo=timezone.utc).timestamp()
     monkeypatch.setattr("task_store.time.time", lambda: now)
     bot = make_bot(tmp_path)
     try:
         ready = [add_task(bot.store, f"ready-{i}") for i in range(3)]
-        unconfirmed = add_task(bot.store, "pending", state="needs_input", ocr={"needs_confirmation": True})
         unread = add_task(bot.store, "unread", state="queued")
         bot.store.update(unread, problem="")
 
@@ -94,28 +92,8 @@ def test_check_picker_skips_unread_and_unconfirmed_questions_and_shows_submissio
         assert [line for line in reply.splitlines() if line.startswith("/收集 ")] == [
             f"/收集 {tid}" for tid in reversed(ready)]
         assert "01-02 15:42" in reply
-        assert all(tid not in reply for tid in (unconfirmed, unread))
+        assert unread not in reply
         assert "不应回显的题干" not in reply
-    finally:
-        bot.store.close()
-
-
-def test_confirmation_and_favorite_pickers_use_applicable_records(tmp_path):
-    bot = make_bot(tmp_path)
-    try:
-        pending = add_task(bot.store, "pending", state="needs_input", ocr={"needs_confirmation": True})
-        other = add_task(bot.store, "other", state="needs_input")
-        saved = add_task(bot.store, "saved", state="expired")
-        bot.store.save_favorite(saved, OWNER, "收藏的题干", "", note="收藏的错因")
-
-        async def check():
-            await dispatch(bot, "/确认题干", event="confirm")
-            await dispatch(bot, "/取消收藏", event="favorite")
-
-        asyncio.run(check())
-        confirm, favorite = (reply[1] for reply in bot.media.sent)
-        assert f"/确认题干 {pending}" in confirm and other not in confirm and saved not in confirm
-        assert f"/取消收藏 {saved}" in favorite and pending not in favorite and "收藏的错因" not in favorite
     finally:
         bot.store.close()
 
@@ -159,7 +137,7 @@ def test_recent_offers_four_bare_ids_in_two_rows_of_two(tmp_path):
         asyncio.run(dispatch(bot, "/最近"))
         text, choices, per_row = calls[0]
         newest = list(reversed(ids))[:4]
-        assert text == "\u200b"
+        assert text == '<qqbot-at-user id="alice" />'
         assert choices == [(tid, tid) for tid in newest]
         assert per_row == 2
     finally:
@@ -174,7 +152,6 @@ def test_recent_excludes_due_tasks_without_waiting_for_cleanup(tmp_path):
         saved = add_task(bot.store, "saved")
         queued = add_task(bot.store, "queued", state="queued")
         due = add_task(bot.store, "due")
-        bot.store.save_favorite(saved, OWNER, "收藏的题干", "")
         with bot.store.db:
             bot.store.db.execute(
                 "UPDATE tasks SET created=? WHERE task_id IN (?,?,?)",
@@ -184,7 +161,7 @@ def test_recent_excludes_due_tasks_without_waiting_for_cleanup(tmp_path):
         asyncio.run(dispatch(bot, "/最近"))
 
         reply = bot.media.sent[0][1]
-        assert [line for line in reply.splitlines() if line.startswith("Q")] == [queued, saved, recent]
+        assert [line for line in reply.splitlines() if line.startswith("Q")] == [queued, recent]
         assert bot.store.get(due)["state"] == "completed"
     finally:
         bot.store.close()

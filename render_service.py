@@ -15,16 +15,6 @@ from render import RenderError
 WORKER = Path(__file__).with_name("render_worker.py")
 
 
-async def render_favorites_async(title, entries, directory):
-    request = directory / "favorite-request.json"
-    request.write_text(json.dumps({"mode": "favorites", "title": title, "entries": entries},
-                                  ensure_ascii=False), encoding="utf-8")
-    try:
-        return json.loads(await run_worker(WORKER, directory, (request.name,), timeout=180))
-    except (RuntimeError, OSError, TimeoutError) as exc:
-        raise RenderError(str(exc)) from exc
-
-
 async def render_artifacts_async(doc: dict, output_dir: Path, task_id: str,
                                  preview_pages: int = 3, timeout: int = 120) -> dict:
     output_dir = output_dir.resolve()

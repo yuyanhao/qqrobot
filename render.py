@@ -550,9 +550,3 @@ def build_tex(doc: dict, *, plain=False, body_only=False, notes=None) -> str:
     if not body_only:
         lines.append(r"\end{document}")
     return "\n".join(lines)
-
-
-def build_favorites_tex(title, entries, *, plain=False, notes=None):
-    bodies = [build_tex(entry["doc"], plain=plain or entry["plain"], body_only=True, notes=notes)
-              for entry in entries]
-    return "\n".join((_header(title, plain=True), "\n\\clearpage\n".join(bodies), r"\end{document}"))

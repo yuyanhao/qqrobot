@@ -103,10 +103,10 @@ def test_default_delivery_uses_all_short_pages_or_complete_pdf(tmp_path, pages):
 
 @pytest.mark.parametrize("kind,seq,types,sequence", [
     ("c2c", 1, ["image"] * 3, [2, 3, 4]),
-    ("c2c", 0, ["text"] + ["image"] * 3, [1, 2, 3, 4]),
-    ("group", 1, ["text"] + ["image"] * 3, [2, 3, 4, 5]),
+    ("c2c", 0, ["image"] * 3, [1, 2, 3]),
+    ("group", 1, ["image"] * 3, [2, 3, 4]),
 ])
-def test_three_page_delivery_fits_existing_reply_budget(tmp_path, kind, seq, types, sequence):
+def test_three_page_delivery_sends_images_without_a_status_line(tmp_path, kind, seq, types, sequence):
     async def check():
         bot = make_bot(tmp_path)
         try:
@@ -120,7 +120,7 @@ def test_three_page_delivery_fits_existing_reply_budget(tmp_path, kind, seq, typ
     asyncio.run(check())
 
 
-def test_long_status_does_not_consume_result_media_slots(tmp_path):
+def test_long_notes_do_not_consume_result_media_slots(tmp_path):
     async def check():
         bot = make_bot(tmp_path)
         try:
@@ -129,10 +129,8 @@ def test_long_status_does_not_consume_result_media_slots(tmp_path):
             result["notes"] = "N" * 2400
             bot.store.update(task["task_id"], result=result)
             await bot._deliver(bot.store.get(task["task_id"]), context("c2c", 0))
-            assert [item[0] for item in bot.media.sent if item[0] != "text"] == ["image"] * 3
+            assert [item[0] for item in bot.media.sent] == ["image"] * 3
             assert bot.store.get(task["task_id"])["delivery"] == "delivered"
-            texts = [item[1] for item in bot.media.sent if item[0] == "text"]
-            assert len(texts) == 1 and len(texts[0]) <= 1800
         finally:
             bot.store.close()
     asyncio.run(check())
@@ -207,9 +205,10 @@ def test_result_pages_deliver_saved_text_without_creating_a_followup(tmp_path):
             bot.store.update(tid, result=result)
             for event, text in enumerate((f"/结果 {tid}", f"/结果 {tid} 第2段", f"/结果 {tid} 第99段")):
                 await bot._handle(SimpleNamespace(id=str(event), content=text), "c2c", "u", "u")
-            first, second, invalid = (item[1] for item in bot.media.sent)
-            assert "开头的推导" in first and f"/结果 {tid} 第2段" in first
+            first, second, second_again, invalid = (item[1] for item in bot.media.sent)
+            assert "开头的推导" in first and "末尾的结论" not in first
             assert "末尾的结论" in second and "开头的推导" not in second
+            assert "末尾的结论" in second_again and "开头的推导" not in second_again
             assert "未完成（服务重启中断）" in first and "未完成（服务重启中断）" in second
             assert "没有第 99 段" in invalid
             assert bot.queue.empty()
@@ -217,33 +216,6 @@ def test_result_pages_deliver_saved_text_without_creating_a_followup(tmp_path):
         finally:
             bot.store.close()
 
-    asyncio.run(check())
-
-
-@pytest.mark.parametrize("page,expected", [(1, [1, 2]), (3, [3, 4]), (4, [4])])
-def test_explicit_images_keep_two_page_batches(tmp_path, page, expected):
-    async def check():
-        bot = make_bot(tmp_path)
-        try:
-            task = saved_answer(bot, 4)
-            await bot._deliver(task, context(), "图片", page)
-            assert bot.media.uploaded == [("image", f"preview-{number:03d}.png") for number in expected]
-        finally:
-            bot.store.close()
-    asyncio.run(check())
-
-
-def test_image_page_out_of_range_is_explained_without_upload(tmp_path):
-    async def check():
-        bot = make_bot(tmp_path)
-        try:
-            task = saved_answer(bot, 4)
-            await bot._deliver(task, context(), "图片", 5)
-            assert not bot.media.uploaded
-            assert any("页" in item[1] and any(word in item[1] for word in ("没有", "超出", "无效", "范围"))
-                       for item in bot.media.sent if item[0] == "text")
-        finally:
-            bot.store.close()
     asyncio.run(check())
 
 
@@ -310,6 +282,27 @@ def test_pdf_extra_arguments_show_usage_without_creating_a_job(tmp_path):
     asyncio.run(check())
 
 
+def test_group_registration_receipt_puts_the_mention_first(tmp_path):
+    async def check():
+        bot = make_bot(tmp_path)
+        calls = []
+
+        async def send_command_choices(kind, target, text, choices, msg_id=None, msg_seq=None,
+                                       per_row=1):
+            calls.append(text)
+
+        bot.media.send_command_choices = send_command_choices
+        ctx = ReplyContext("group", "g", "group:g:alice", "ack", time.time())
+        try:
+            await bot._submit(ctx, {"text": "求积分 x^2"})
+            tid = bot.store.list_recent(ctx.owner)[0]["task_id"]
+            assert calls == [
+                f'<qqbot-at-user id="alice" /> 已登记 {tid}。\n正在解题，请稍候…']
+        finally:
+            bot.store.close()
+    asyncio.run(check())
+
+
 @pytest.mark.parametrize("action", ["new", "followup", "retry"])
 def test_registration_is_one_short_receipt_without_command_spam(tmp_path, action):
     async def check():
@@ -323,7 +316,7 @@ def test_registration_is_one_short_receipt_without_command_spam(tmp_path, action
             assert len(receipts) == 1
             assert re.fullmatch(r"已登记 Q\d{6}-\d{6}。\n正在解题，请稍候…", receipts[0])
             assert all(command not in receipts[0] for command in
-                       ("/帮助", "/PDF", "/进度", "/图片", "/追问", "/重试"))
+                       ("/帮助", "/PDF", "/进度", "/追问", "/重试"))
             assert bot.queue.qsize() == 1
         finally:
             bot.store.close()
@@ -350,6 +343,35 @@ def test_registration_ack_offers_a_task_id_button(tmp_path):
             assert bot.queue.qsize() == 1
         finally:
             bot.store.close()
+    asyncio.run(check())
+
+
+def test_group_pickers_mention_the_asker_but_c2c_does_not():
+    from task_delivery import mention_tag
+
+    group = ReplyContext("group", "g", "group:g:alice", "m", 0)
+    direct = ReplyContext("c2c", "u", "c2c:u", "m", 0)
+    assert mention_tag(group) == '<qqbot-at-user id="alice" />'
+    assert mention_tag(direct) == ""
+
+
+def test_keyboard_rows_are_rejected_before_hitting_qq():
+    from qqmedia import QQMedia, QQMediaError
+
+    async def check():
+        media = QQMedia("app", "plain-secret", active_delivery=False)
+
+        async def payload(*args, **kwargs):
+            raise AssertionError("超限的键盘不应发出")
+
+        media._send_payload = payload
+        try:
+            with pytest.raises(QQMediaError):
+                await media.send_command_choices(
+                    "c2c", "u", "t", [(f"b{index}", f"/c{index}") for index in range(16)],
+                    per_row=2)
+        finally:
+            await media.close()
     asyncio.run(check())
 
 
@@ -384,7 +406,7 @@ def test_help_feedback_contains_main_commands(tmp_path):
             assert len(bot.media.sent) == 1 and bot.media.sent[0][0] == "text"
             assert bot.media.sent[0][1] == HELP
             assert len(HELP) <= 1800
-            for command in ("/结果", "/PDF", "/进度", "/图片", "/查错", "/追问", "/补充", "/取消", "/重试", "/题目", "/帮助"):
+            for command in ("/结果", "/PDF", "/进度", "/查错", "/追问", "/补充", "/取消", "/重试", "/题目", "/帮助"):
                 assert command in HELP
             assert bot.queue.empty()
         finally:

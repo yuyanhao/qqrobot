@@ -23,7 +23,7 @@ def test_panel_preview_has_canonical_names_and_fits_qq_limits():
     assert payload["scope"] == "group" and payload["target_type"] == "all"
     items = payload["panel"]["items"]
     names = {item["name"] for item in items}
-    assert {"/帮助", "/查错", "/最近", "/题目", "/复习", "/书库"} <= names
+    assert {"/帮助", "/查错", "/最近", "/题目", "/书库"} <= names
     assert 0 < len(names) == len(items) <= 20
     for item in items:
         assert item["name"].startswith("/") and item["type"] == "command"

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ai import AIError, DeepSeek, extract_json, normalize_solution, repair_json_escapes, validate_check
+from ai import AIError, DeepSeek, extract_json, normalize_solution, repair_json_escapes, validate_judgement
 from safe_math import Parser, run
 from task_store import TaskStore, QueueFull
 from task_bot import ReplyContext
@@ -40,8 +40,8 @@ def test_bad_solution_is_actionable(value):
 
 
 def test_missing_verification_is_not_a_pass():
-    with pytest.raises(AIError): validate_check({"errors": []})
-    with pytest.raises(AIError): validate_check({"ok": "true"})
+    with pytest.raises(AIError): validate_judgement({"errors": []})
+    with pytest.raises(AIError): validate_judgement({"ok": "true"})
 
 
 def test_json_repair_is_bounded_and_does_not_resolve():

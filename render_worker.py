@@ -10,7 +10,7 @@ from process_tools import set_worker_limits
 set_worker_limits()
 
 from pdf_tools import render_pdf_batch, render_pdf_pages
-from render import RenderError, build_favorites_tex, build_tex
+from render import RenderError, build_tex
 
 
 def compile_tex(tex, binary):
@@ -31,20 +31,15 @@ def render_document(request, mode, directory):
     # Formulas rejected by the LaTeX whitelist degrade one by one; only a real
     # compiler failure still falls back to the whole-document source mode.
     notes: list[str] = []
-    if mode == "favorites":
-        def render(plain):
-            return build_favorites_tex(request["title"], request["entries"], plain=plain,
-                                       notes=None if plain else notes)
-    else:
-        from plot_tools import create_plots
-        doc = request["doc"]
-        plots, warnings = create_plots(doc.get("plots", []), directory) if doc.get("plots") else ([], [])
-        figures = "\n".join(r"\begin{center}\includegraphics[width=.88\linewidth]{" + p.name +
-                            r"}\end{center}" for p in plots)
+    from plot_tools import create_plots
+    doc = request["doc"]
+    plots, warnings = create_plots(doc.get("plots", []), directory) if doc.get("plots") else ([], [])
+    figures = "\n".join(r"\begin{center}\includegraphics[width=.88\linewidth]{" + p.name +
+                        r"}\end{center}" for p in plots)
 
-        def render(plain):
-            return build_tex(doc, plain=plain, notes=None if plain else notes).replace(
-                r"\end{document}", figures + "\n" + r"\end{document}")
+    def render(plain):
+        return build_tex(doc, plain=plain, notes=None if plain else notes).replace(
+            r"\end{document}", figures + "\n" + r"\end{document}")
 
     try:
         compile_tex(render(False), binary)
@@ -73,11 +68,8 @@ def main():
         result = {"total_pages": total, "page_numbers": numbers, "selected": selected,
                   "selection_count": selection_count}
     else:
-        warnings = render_document(request, mode, directory) if mode in ("solution", "favorites") else []
+        warnings = render_document(request, mode, directory) if mode == "solution" else []
         pdf = Path(request.get("pdf", "solution.pdf"))
-        if mode == "favorites":
-            print(json.dumps({"pdf_path": str(pdf.resolve()), "warnings": warnings}, ensure_ascii=False))
-            return
         images, total, numbers = render_pdf_pages(pdf, request.get("start_page", 1),
                                                   request.get("count", 2), max_document_pages=40)
         result = {"pdf_path": str(pdf.resolve()), "total_pages": total, "page_numbers": numbers,

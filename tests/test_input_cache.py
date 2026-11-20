@@ -214,22 +214,6 @@ def test_per_message_attachment_limit_is_enforced_before_downloading(store, monk
     asyncio.run(check())
 
 
-def test_total_twelve_attachment_limit_preserves_existing_cache(store, monkeypatch):
-    sources = [attachment(str(index)) for index in range(13)]
-    downloader(monkeypatch, {item["url"]: f"image-{index}".encode("ascii") for index, item in enumerate(sources)})
-
-    async def check():
-        task = collection(store)
-        for offset in range(0, 12, 4):
-            task, _ = await cache_and_save(store, task, sources[offset:offset + 4])
-        previous = input_files(store, task)
-        with pytest.raises(InputCacheError, match="12 个附件"):
-            await cache_attachments(store, task, sources[12:])
-        assert input_files(store, task) == previous and len(previous) == 12
-
-    asyncio.run(check())
-
-
 def test_disk_budget_failure_removes_new_materials_but_keeps_old_ones(store, monkeypatch):
     old, small, large = (attachment(name) for name in ("old", "small", "large"))
     downloader(monkeypatch, {old["url"]: b"old", small["url"]: b"small", large["url"]: b"x" * 1024**2})

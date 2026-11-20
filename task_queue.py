@@ -12,7 +12,6 @@ from input_cache import (InputCacheError, cache_attachments, discard_cached_atta
                          read_cached_attachment)
 from message_input import _is_pdf, _is_text_file
 from pdf_tools import (MAX_INPUT_PAGES, PDFError,
-                       pdf_pages_from_text, pdf_selection_page_count,
                        pdf_task_page_budget, split_pdf_selection)
 from render_service import render_input_pdf_batches_async
 from solver import STUDY_ACTIONS, InputError, normalize_image, study_problem
@@ -60,45 +59,6 @@ class TaskQueue:
     """Queue operations used by TaskBot and the command handlers."""
 
     @staticmethod
-    def _estimated_ocr_batches(request):
-        question_attachments = request.get("question_attachments") or []
-        try:
-            text_pages = len(pdf_pages_from_text(request.get("text") or ""))
-        except PDFError:
-            text_pages = 0
-
-        def estimate_role(attachments):
-            pending_images = 0
-            batches = 0
-            for item in attachments:
-                if item.get("book_id") or _is_pdf(item):
-                    if pending_images:
-                        batches += (pending_images + 3) // 4
-                        pending_images = 0
-                    selection = item.get("pdf_selection")
-                    if selection:
-                        try:
-                            pages = pdf_selection_page_count(selection)
-                        except PDFError:
-                            pages = 0
-                    else:
-                        pages = text_pages
-                    batches += (pages + 3) // 4
-                elif _is_text_file(item):
-                    if pending_images:
-                        batches += (pending_images + 3) // 4
-                        pending_images = 0
-                else:
-                    pending_images += 1
-            if pending_images:
-                batches += (pending_images + 3) // 4
-            return batches
-
-        batches = estimate_role(question_attachments)
-        batches += estimate_role(request.get("attachments") or [])
-        return batches
-
-    @staticmethod
     def _pdf_page_budget(request):
         """Validate page selections and the whole-task page budget before queueing."""
         pdfs = [item for item in [*(request.get("question_attachments") or []),
@@ -106,7 +66,7 @@ class TaskQueue:
                 if _is_pdf(item) or item.get("book_id")]
         return pdf_task_page_budget(pdfs, request.get("text") or "")
 
-    def _registration_receipt(self, tid, action=None, request=None):
+    def _registration_receipt(self, tid, action=None):
         if action in STUDY_ACTIONS:
             return f"已登记 {tid}。\n正在{action}，请稍候…"
         return f"已登记 {tid}。\n正在解题，请稍候…"
@@ -154,7 +114,7 @@ class TaskQueue:
             await self._command_choices(
                 context,
                 f"已登记 {tid}。\n/补图 {tid} 附材料，收齐后发 /解题 {tid} 或 /查错 {tid}。",
-                [(tid, tid)])
+                [(tid, tid)], inline_mention=True)
             if attachments:
                 try:
                     updated, added = await self._save_collection_materials(
@@ -243,9 +203,6 @@ class TaskQueue:
         if parent:
             if tail:
                 await self._text(context, "已关联原题，材料按草稿处理。")
-                return
-            if parent["question_ocr"].get("needs_confirmation"):
-                await self._text(context, f"原题识图有疑点：先 /题干 {parent['task_id']} 核对。")
                 return
             problem_snapshot = study_problem(parent["problem"], parent["request"])
             question_ocr = parent["question_ocr"]
@@ -422,8 +379,9 @@ class TaskQueue:
                 await self._text(context, str(exc))
                 return
             self.contexts[tid] = context
-            receipt = self._registration_receipt(tid, task["request"].get("action"), task["request"])
-            await self._command_choices(context, (note + "\n" + receipt) if note else receipt, [(tid, tid)])
+            receipt = self._registration_receipt(tid, task["request"].get("action"))
+            await self._command_choices(context, (note + "\n" + receipt) if note else receipt,
+                                        [(tid, tid)], inline_mention=True)
             try:
                 self.queue.put_nowait(tid)
             except asyncio.QueueFull:
@@ -462,7 +420,8 @@ class TaskQueue:
         self.contexts[tid] = context
         # Acknowledge before allowing a fast task to consume this message's reply sequence.
         await self._command_choices(
-            context, self._registration_receipt(tid, request.get("action"), request), [(tid, tid)])
+            context, self._registration_receipt(tid, request.get("action")), [(tid, tid)],
+            inline_mention=True)
         try:
             self.queue.put_nowait(tid)
         except asyncio.QueueFull:
@@ -513,10 +472,7 @@ class TaskQueue:
         elif task["request"].get("action") == "提示":
             await self._text(context, "提示指令已下线，请直接发送题目获取解答。")
         else:
-            request = {**task["request"], "retry_of": tid}
-            if self.store.get_favorite(tid, context.owner):
-                request["favorite_id"] = tid
-            await self._submit(context, request)
+            await self._submit(context, {**task["request"], "retry_of": tid})
 
     def _finish_failure(self, tid, error):
         row = self.store.get(tid)

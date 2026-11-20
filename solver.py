@@ -76,12 +76,9 @@ def study_problem(problem, request):
 def merge_question_ocr(inherited, current):
     if not current:
         return inherited
-    if not inherited or inherited.get("confirmed"):
+    if not inherited:
         return current
-    return {
-        "notes": list(dict.fromkeys(inherited["notes"] + current["notes"])),
-        "needs_confirmation": inherited["needs_confirmation"] or current["needs_confirmation"],
-    }
+    return {"notes": list(dict.fromkeys(inherited.get("notes", []) + current.get("notes", [])))}
 
 
 def followup_solution_summary(solution):
@@ -148,7 +145,6 @@ class Solver:
         if len(attachments) > limit:
             raise InputError(f"本次最多 {limit} 个附件；多张题图请用 /收集 分批补图")
         image_total, picture_total, batches = 0, 0, 0
-        needs_confirmation = False
 
         async def transcribe_with_fallback(batch, options):
             nonlocal batches
@@ -174,7 +170,6 @@ class Solver:
                     raise
 
         async def transcribe_batch(label=None, question_target=""):
-            nonlocal needs_confirmation
             if not images:
                 return
             options = {}
@@ -188,14 +183,15 @@ class Solver:
             recognized_batches = await transcribe_with_fallback(images, options)
             for index, recognized in enumerate(recognized_batches, 1):
                 part_label = label if len(recognized_batches) == 1 else f"{label}（拆分识别 {index}/{len(recognized_batches)}）"
-                transcribed = strip_page_furniture(recognized["problem_latex"]) or recognized["problem_latex"]
+                transcribed = recognized["problem_latex"]
+                if not draft:
+                    transcribed = strip_page_furniture(transcribed) or transcribed
                 blocks.append(part_label + "：\n" + transcribed)
             if sum(map(len, blocks)) > 24000:
                 raise InputError(f"读取的材料超过 24000 字符，尚未完成全文处理；每份 PDF 每次最多读取 {MAX_INPUT_PAGES} 页，请按页码分段或按小问拆分。")
             for recognized in recognized_batches:
                 if recognized.get("notes"):
                     ocr_notes.append(recognized["notes"])
-                needs_confirmation |= not draft and recognized.get("needs_confirmation", False)
             images.clear()
 
         for index, item in enumerate(attachments):
@@ -254,20 +250,11 @@ class Solver:
         await transcribe_batch()
         if image_total:
             input_notes.append(f"共识别 {image_total} 张图片/PDF 页面，分 {batches} 批转写")
-        ocr = {"notes": ocr_notes, "needs_confirmation": needs_confirmation} if ocr_notes else {}
+        ocr = {"notes": ocr_notes} if ocr_notes else {}
         return blocks, ocr, input_notes
 
     def record_question(self, task, problem, ocr):
-        tid = task["task_id"]
-        if ocr.get("needs_confirmation"):
-            action = task["request"].get("action")
-            ocr = {**ocr, "mode": action if action in STUDY_ACTIONS else "解题"}
-        self.store.update(tid, problem=problem, question_ocr=ocr)
-        self.store.update_favorite_question(task["request"].get("favorite_id") or tid, task["owner"],
-                                            study_problem(problem, task["request"]), ocr)
-        if ocr.get("needs_confirmation"):
-            raise InputError(f"识图有疑点，暂缓作答。发 /题干 {tid} 核对，"
-                             f"再发 /确认题干 {tid}（可在题号后写更正）继续。")
+        self.store.update(task["task_id"], problem=problem, question_ocr=ocr)
 
     async def inputs(self, task, directory):
         request = task["request"]
@@ -281,8 +268,9 @@ class Solver:
         materials, current_ocr, input_notes = await self.attachment_inputs(task, directory)
         inherited_ocr = parent.get("question_ocr", {}) if parent else request.get("question_ocr", {})
         question_ocr = merge_question_ocr(inherited_ocr, current_ocr)
-        if question_ocr.get("notes") and not question_ocr.get("confirmed"):
-            extra += "\n识图备注：" + "；".join(question_ocr["notes"])
+        if question_ocr.get("notes"):
+            extra += "\n识图备注（不确定处按数学上最合理的读法处理，不要反问用户）：" + \
+                "；".join(question_ocr["notes"])
         if parent:
             blocks = [parent["problem"]]
             additions = [request.get("quoted", ""), *materials]
@@ -333,8 +321,9 @@ class Solver:
         if max(len(problem), len(supplied)) > 24000:
             raise InputError("题干或草稿超过 2.4 万字符，请按小问拆分。")
         self.record_question(task, problem, question_ocr)
-        if question_ocr.get("notes") and not question_ocr.get("confirmed"):
-            supplied += "\n\n题干识别备注：" + "；".join(question_ocr["notes"])
+        if question_ocr.get("notes"):
+            supplied += "\n\n题干识别备注（不确定处按最合理的读法处理，不要反问用户）：" + \
+                "；".join(question_ocr["notes"])
         if current_ocr.get("notes"):
             supplied += "\n\n附件识别备注：" + "；".join(current_ocr["notes"])
         self.store.update(tid, state="solving")
@@ -374,8 +363,6 @@ class Solver:
                 feedback += "\n\n符号计算（仅核对以下算式）\n" + "\n".join(lines)
         state = "needs_input" if status == "needs_clarification" else "completed"
         self.store.update(tid, state=state, result={"study_text": feedback, "answer_status": status})
-        if state == "completed":
-            self.store.fill_favorite_answer(request.get("favorite_id") or tid, task["owner"], problem, feedback)
 
     async def search(self, query):
         if not self.settings.search or not self.settings.search_key:
@@ -440,8 +427,10 @@ class Solver:
             except Exception:
                 warnings.append("符号计算未完成")
         self.store.update(tid, state="solving")
-        solution = await self.ai.solve(problem, extra, budget(self.settings.solve_timeout),
-                                       calculations, evidence)
+        solve_budget = budget(self.settings.solve_timeout)
+        if deadline and solve_budget < 60:
+            raise InputError("本次时间预算不足，请稍后重试或按小问拆分。")
+        solution = await self.ai.solve(problem, extra, solve_budget, calculations, evidence)
         self.save_draft(tid, directory, solution, problem, input_notes)
         if solution.get("search_query") and not searched and self.settings.search and self.settings.search_key:
             self.store.update(tid, state="searching")
@@ -500,10 +489,3 @@ class Solver:
             log.warning("render_failed task=%s type=%s", tid, type(exc).__name__)
         state = "needs_input" if solution["status"] == "needs_clarification" else "completed"
         self.store.update(tid, state=state, result=result)
-        if state == "completed":
-            favorite_id = task["request"].get("favorite_id") or tid
-            favorite = self.store.get_favorite(favorite_id, task["owner"])
-            effective_problem = study_problem(problem, task["request"])
-            if favorite and not favorite["answer"] and favorite["problem"] == effective_problem:
-                self.store.fill_favorite_answer(favorite_id, task["owner"], effective_problem,
-                                                solution_text(solution, include_problem=False))
